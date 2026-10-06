@@ -149,10 +149,32 @@ type Choice struct {
 	FinishReason string          `json:"finish_reason"`
 }
 
-// ResponseMessage is the assistant's reply.
+// ResponseMessage is the assistant's reply. Content is a pointer so a tool-call
+// turn can send `"content": null`, which is what the OpenAI API does: a turn
+// either answers or asks the caller to run something, never both.
 type ResponseMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role      string     `json:"role"`
+	Content   *string    `json:"content"`
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+}
+
+// ContentString returns the message content, or an empty string when the turn
+// carried no prose.
+func (m ResponseMessage) ContentString() string {
+	if m.Content == nil {
+		return ""
+	}
+	return *m.Content
+}
+
+// NewResponseMessage builds an assistant message from optional prose and calls.
+// Exactly one of the two is expected to be non-empty.
+func NewResponseMessage(content string, calls []ToolCall) ResponseMessage {
+	message := ResponseMessage{Role: "assistant", ToolCalls: calls}
+	if len(calls) == 0 {
+		message.Content = &content
+	}
+	return message
 }
 
 // Usage is a token estimate. Agents do not report token counts, so these are
@@ -183,8 +205,9 @@ type ChunkChoice struct {
 
 // Delta is an incremental assistant message.
 type Delta struct {
-	Role    string `json:"role,omitempty"`
-	Content string `json:"content,omitempty"`
+	Role      string          `json:"role,omitempty"`
+	Content   string          `json:"content,omitempty"`
+	ToolCalls []ToolCallDelta `json:"tool_calls,omitempty"`
 }
 
 /* ---- ACP extension ---- */

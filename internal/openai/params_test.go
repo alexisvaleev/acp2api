@@ -20,8 +20,6 @@ func decode(t *testing.T, body string) *ChatCompletionRequest {
 
 func TestUnsupportedParametersAreRejected(t *testing.T) {
 	cases := map[string]string{
-		"tools":                 `{"tools":[{"type":"function","function":{"name":"f"}}]}`,
-		"tool_choice":           `{"tool_choice":"auto"}`,
 		"functions":             `{"functions":[{"name":"f"}]}`,
 		"function_call":         `{"function_call":"auto"}`,
 		"response_format":       `{"response_format":{"type":"json_object"}}`,

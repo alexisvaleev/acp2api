@@ -61,32 +61,58 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		conversationID = req.User
 	}
 
-	prompt, err := openai.BuildPrompt(req.Messages, conversationID != "")
+	choice, err := openai.ParseToolChoice(req.ToolChoice)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest, "invalid_tool_choice",
+			err.Error(), "tool_choice")
+		return
+	}
+
+	prompt, err := openai.BuildTurn(req.Messages, conversationID != "", req.Tools, choice)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest, "invalid_messages", err.Error(), "messages")
 		return
 	}
 
-	turn := session.Request{
-		Model:          req.Model,
-		ConversationID: conversationID,
-		Workspace:      req.Workspace,
-		Prompt:         prompt,
+	plan := turnPlan{
+		req:     req,
+		prompt:  prompt,
+		ignored: ignored,
+		// Caller tools are in play only when some were declared and the choice
+		// does not forbid them. Only then can an agent message be an envelope.
+		tools: len(req.Tools) > 0 && choice.UsesCallerTools(),
+		turn: session.Request{
+			Model:          req.Model,
+			ConversationID: conversationID,
+			Workspace:      req.Workspace,
+			Prompt:         prompt,
+		},
 	}
 
 	if req.Stream {
-		s.streamTurn(w, r, req, turn, prompt, ignored)
+		s.streamTurn(w, r, plan)
 		return
 	}
-	s.blockingTurn(w, r, req, turn, prompt, ignored)
+	s.blockingTurn(w, r, plan)
+}
+
+// turnPlan is everything both renderers need for one turn.
+type turnPlan struct {
+	req     openai.ChatCompletionRequest
+	turn    session.Request
+	prompt  string
+	ignored []string
+	// tools reports whether the caller declared tools, so an agent message may
+	// be a tool-call envelope rather than prose.
+	tools bool
 }
 
 // blockingTurn runs the turn and returns one complete completion.
-func (s *Server) blockingTurn(w http.ResponseWriter, r *http.Request, req openai.ChatCompletionRequest, turn session.Request, prompt string, ignored []string) {
+func (s *Server) blockingTurn(w http.ResponseWriter, r *http.Request, plan turnPlan) {
 	var text strings.Builder
 	var steps openai.StepLog
 
-	result, err := s.manager.Prompt(r.Context(), turn, func(u acp.SessionUpdate) error {
+	result, err := s.manager.Prompt(r.Context(), plan.turn, func(u acp.SessionUpdate) error {
 		piece, step := openai.FromUpdate(u)
 		text.WriteString(piece)
 		steps.Add(step)
@@ -98,23 +124,41 @@ func (s *Server) blockingTurn(w http.ResponseWriter, r *http.Request, req openai
 	}
 
 	content := text.String()
+	var calls []openai.ToolCall
+	if plan.tools {
+		// A tool call is the whole message: the envelope is consumed, leaving
+		// no prose behind.
+		if parsed := openai.ParseToolCalls(content); len(parsed) > 0 {
+			calls, content = parsed, ""
+		}
+	}
+
+	finish := openai.FinishReason(result.StopReason)
+	if len(calls) > 0 {
+		finish = openai.FinishToolCalls
+	}
+
 	writeJSON(w, http.StatusOK, openai.ChatCompletionResponse{
 		ID:      openai.NewID("chatcmpl"),
 		Object:  openai.ObjectChatCompletion,
 		Created: time.Now().Unix(),
-		Model:   req.Model,
+		Model:   plan.req.Model,
 		Choices: []openai.Choice{{
 			Index:        0,
-			Message:      openai.ResponseMessage{Role: "assistant", Content: content},
-			FinishReason: openai.FinishReason(result.StopReason),
+			Message:      openai.NewResponseMessage(content, calls),
+			FinishReason: finish,
 		}},
-		Usage: estimateUsage(prompt, content),
-		ACP:   acpMeta(result, steps, ignored),
+		Usage: estimateUsage(plan.prompt, content),
+		ACP:   acpMeta(result, steps, plan.ignored),
 	})
 }
 
 // streamTurn runs the turn and emits the assistant text as server-sent events.
-func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, req openai.ChatCompletionRequest, turn session.Request, prompt string, ignored []string) {
+//
+// With caller tools in play the text is held back while it could still be a
+// tool-call envelope, so the envelope never reaches the client as prose. The
+// hold fails open: anything that turns out not to be an envelope is released.
+func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, plan turnPlan) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, openai.ErrTypeServer, "stream_unsupported",
@@ -137,20 +181,28 @@ func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, req openai.C
 			flusher.Flush()
 		}
 	}
+	sendText := func(text string) {
+		if text != "" {
+			send(newChunk(id, created, plan.req.Model, openai.Delta{Content: text}, nil))
+		}
+	}
 
-	send(newChunk(id, created, req.Model, openai.Delta{Role: "assistant"}, nil))
+	send(newChunk(id, created, plan.req.Model, openai.Delta{Role: "assistant"}, nil))
 
 	var text strings.Builder
 	var steps openai.StepLog
+	hold := openai.NewToolStream(plan.tools)
 
-	result, err := s.manager.Prompt(r.Context(), turn, func(u acp.SessionUpdate) error {
+	result, err := s.manager.Prompt(r.Context(), plan.turn, func(u acp.SessionUpdate) error {
 		piece, step := openai.FromUpdate(u)
 		steps.Add(step)
 		if piece == "" {
 			return nil
 		}
-		text.WriteString(piece)
-		send(newChunk(id, created, req.Model, openai.Delta{Content: piece}, nil))
+		if emit := hold.Push(piece); emit != "" {
+			text.WriteString(emit)
+			sendText(emit)
+		}
 		return nil
 	})
 
@@ -167,19 +219,28 @@ func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, req openai.C
 		return
 	}
 
-	content := text.String()
+	// Settle the hold: what is left is either the answer or a tool call.
+	rest, calls := hold.Finish()
+	text.WriteString(rest)
+	sendText(rest)
+
 	finish := openai.FinishReason(result.StopReason)
-	final := newChunk(id, created, req.Model, openai.Delta{}, &finish)
-	final.ACP = acpMeta(result, steps, ignored)
+	if len(calls) > 0 {
+		finish = openai.FinishToolCalls
+		send(newChunk(id, created, plan.req.Model, openai.Delta{ToolCalls: openai.ToolCallDeltas(calls)}, nil))
+	}
+
+	final := newChunk(id, created, plan.req.Model, openai.Delta{}, &finish)
+	final.ACP = acpMeta(result, steps, plan.ignored)
 	send(final)
 
-	if req.StreamOptions != nil && req.StreamOptions.IncludeUsage {
+	if plan.req.StreamOptions != nil && plan.req.StreamOptions.IncludeUsage {
 		send(openai.ChatCompletionChunk{
 			ID:      id,
 			Object:  openai.ObjectChatCompletionChunk,
 			Created: created,
-			Model:   req.Model,
-			Usage:   estimateUsage(prompt, content),
+			Model:   plan.req.Model,
+			Usage:   estimateUsage(plan.prompt, text.String()),
 		})
 	}
 

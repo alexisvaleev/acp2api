@@ -113,8 +113,8 @@ func TestChatCompletionNonStreaming(t *testing.T) {
 		t.Fatalf("choices = %d, want 1", len(completion.Choices))
 	}
 	choice := completion.Choices[0]
-	if choice.Message.Content != "chunk1 chunk2 " {
-		t.Fatalf("content = %q", choice.Message.Content)
+	if got := choice.Message.ContentString(); got != "chunk1 chunk2 " {
+		t.Fatalf("content = %q", got)
 	}
 	if choice.FinishReason != "stop" {
 		t.Fatalf("finish reason = %q", choice.FinishReason)
@@ -275,7 +275,7 @@ func TestUnsupportedParameterIsRejectedBeforeAnyWork(t *testing.T) {
 	resp := post(t, srv, "", map[string]any{
 		"model":    "fake",
 		"messages": []map[string]string{{"role": "user", "content": "hi"}},
-		"tools":    []map[string]any{{"type": "function", "function": map[string]string{"name": "f"}}},
+		"logprobs": true,
 	})
 	defer resp.Body.Close()
 
@@ -289,8 +289,8 @@ func TestUnsupportedParameterIsRejectedBeforeAnyWork(t *testing.T) {
 	if failure.Error.Code != openai.CodeUnsupportedParameter {
 		t.Fatalf("error code = %q, want %q", failure.Error.Code, openai.CodeUnsupportedParameter)
 	}
-	if failure.Error.Param != "tools" {
-		t.Fatalf("error param = %q, want tools", failure.Error.Param)
+	if failure.Error.Param != "logprobs" {
+		t.Fatalf("error param = %q, want logprobs", failure.Error.Param)
 	}
 }
 

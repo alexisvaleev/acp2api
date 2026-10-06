@@ -57,14 +57,13 @@ func (e *ParamError) Error() string {
 // Reasons that more than one rule shares, kept as constants so the table and
 // the value-dependent checks cannot drift apart.
 const (
-	reasonSampling    = "the agent owns its own sampling"
-	reasonLogprobs    = "an ACP agent does not expose token probabilities, and synthesising them would be fabrication"
-	reasonChoices     = "multiple choices are not yet supported; they arrive in stage 5"
-	reasonCallerTools = "caller-defined tools are not yet translated to ACP; they arrive in stage 2"
-	reasonLegacyFns   = "the legacy functions API is not translated to ACP; use tools when stage 2 lands"
-	reasonStructured  = "structured outputs are not yet enforced; they arrive in stage 4"
-	reasonStop        = "stop sequences are not yet applied to agent output; they arrive in stage 4"
-	reasonLength      = "output length is not yet capped; it arrives in stage 4"
+	reasonSampling   = "the agent owns its own sampling"
+	reasonLogprobs   = "an ACP agent does not expose token probabilities, and synthesising them would be fabrication"
+	reasonChoices    = "multiple choices are not yet supported; they arrive in stage 5"
+	reasonLegacyFns  = "the legacy functions API is not translated to ACP; use tools instead"
+	reasonStructured = "structured outputs are not yet enforced; they arrive in stage 4"
+	reasonStop       = "stop sequences are not yet applied to agent output; they arrive in stage 4"
+	reasonLength     = "output length is not yet capped; it arrives in stage 4"
 )
 
 // paramPolicy is the single source of truth for how every policed parameter is
@@ -80,6 +79,8 @@ var paramPolicy = map[string]ParamRule{
 	"conversation_id": {Name: "conversation_id", Disposition: Supported},
 	"user":            {Name: "user", Disposition: Supported},
 	"workspace":       {Name: "workspace", Disposition: Supported},
+	"tools":           {Name: "tools", Disposition: Supported},
+	"tool_choice":     {Name: "tool_choice", Disposition: Supported},
 
 	/* Accepted and reported: the agent owns its own sampling. */
 	"temperature":       {Name: "temperature", Disposition: Ignored, Reason: reasonSampling},
@@ -90,8 +91,6 @@ var paramPolicy = map[string]ParamRule{
 	"logit_bias":        {Name: "logit_bias", Disposition: Ignored, Reason: reasonSampling},
 
 	/* Unsupported: ignoring these would make the response violate the request. */
-	"tools":                 {Name: "tools", Disposition: Unsupported, Reason: reasonCallerTools},
-	"tool_choice":           {Name: "tool_choice", Disposition: Unsupported, Reason: reasonCallerTools},
 	"functions":             {Name: "functions", Disposition: Unsupported, Reason: reasonLegacyFns},
 	"function_call":         {Name: "function_call", Disposition: Unsupported, Reason: reasonLegacyFns},
 	"response_format":       {Name: "response_format", Disposition: Unsupported, Reason: reasonStructured},

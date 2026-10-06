@@ -13,6 +13,11 @@
 //	FAKE_AGENT_READ_PATH=/x     request fs/read_text_file during the turn
 //	FAKE_AGENT_WRITE_PATH=/x    request fs/write_text_file during the turn
 //	FAKE_AGENT_REQUEST_PERM=1   request session/request_permission during the turn
+//	FAKE_AGENT_ENVELOPE=name    reply with a tool-call envelope for that function
+//	FAKE_AGENT_ENVELOPE_PREFIX  prose to emit before the envelope
+//	FAKE_AGENT_ENVELOPE_PARTS   how many deltas to split the envelope into
+//	FAKE_AGENT_ENVELOPE_ONCE=1  emit the envelope only on the first turn
+//	FAKE_AGENT_ECHO=1           reply with the prompt it received
 //	FAKE_AGENT_EXIT_AFTER=1     exit the process right after the first turn
 package fakeagent
 
@@ -77,6 +82,7 @@ type agent struct {
 	pending map[int64]chan message
 
 	sessions int
+	turns    int
 }
 
 func run() {
@@ -175,6 +181,10 @@ func (a *agent) handleRequest(msg message) {
 func (a *agent) turn(msg message) {
 	var p struct {
 		SessionID string `json:"sessionId"`
+		Prompt    []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"prompt"`
 	}
 	_ = json.Unmarshal(msg.Params, &p)
 	sessionID := p.SessionID
@@ -182,13 +192,17 @@ func (a *agent) turn(msg message) {
 		sessionID = "fake-session-1"
 	}
 
-	chunks := envInt("FAKE_AGENT_CHUNKS", 2)
-	for i := 0; i < chunks; i++ {
+	prompt := ""
+	for _, block := range p.Prompt {
+		prompt += block.Text
+	}
+
+	for _, piece := range a.turnPieces(prompt) {
 		a.notify("session/update", map[string]any{
 			"sessionId": sessionID,
 			"update": map[string]any{
 				"sessionUpdate": "agent_message_chunk",
-				"content":       map[string]any{"type": "text", "text": fmt.Sprintf("chunk%d ", i+1)},
+				"content":       map[string]any{"type": "text", "text": piece},
 			},
 		})
 	}
@@ -226,6 +240,58 @@ func (a *agent) turn(msg message) {
 		a.out.Flush()
 		os.Exit(0)
 	}
+}
+
+// turnPieces returns the text deltas for one turn.
+//
+// In envelope mode the deltas are deliberately split mid-JSON, which is what
+// exercises the gateway's stream hold-back: a naive implementation leaks half
+// an envelope to the client as prose.
+func (a *agent) turnPieces(prompt string) []string {
+	a.mu.Lock()
+	a.turns++
+	turn := a.turns
+	a.mu.Unlock()
+
+	if name := os.Getenv("FAKE_AGENT_ENVELOPE"); name != "" && !(turn > 1 && os.Getenv("FAKE_AGENT_ENVELOPE_ONCE") == "1") {
+		envelope := fmt.Sprintf(
+			`{"tool_calls":[{"id":"call_1","type":"function","function":{"name":%q,"arguments":"{\"city\":\"Paris\"}"}}]}`,
+			name,
+		)
+		pieces := make([]string, 0, 4)
+		if prefix := os.Getenv("FAKE_AGENT_ENVELOPE_PREFIX"); prefix != "" {
+			pieces = append(pieces, prefix)
+		}
+		return append(pieces, splitEvery(envelope, envInt("FAKE_AGENT_ENVELOPE_PARTS", 3))...)
+	}
+
+	if os.Getenv("FAKE_AGENT_ECHO") == "1" {
+		return splitEvery(prompt, envInt("FAKE_AGENT_CHUNKS", 2))
+	}
+
+	chunks := envInt("FAKE_AGENT_CHUNKS", 2)
+	pieces := make([]string, 0, chunks)
+	for i := 0; i < chunks; i++ {
+		pieces = append(pieces, fmt.Sprintf("chunk%d ", i+1))
+	}
+	return pieces
+}
+
+// splitEvery splits s into at most n roughly equal parts.
+func splitEvery(s string, n int) []string {
+	if n < 2 || len(s) < n {
+		return []string{s}
+	}
+	size := (len(s) + n - 1) / n
+	parts := make([]string, 0, n)
+	for i := 0; i < len(s); i += size {
+		end := i + size
+		if end > len(s) {
+			end = len(s)
+		}
+		parts = append(parts, s[i:end])
+	}
+	return parts
 }
 
 /* ---- wire helpers ---- */

@@ -32,7 +32,8 @@ OpenAI client ──HTTP/SSE──▶ gateway ──JSON-RPC over stdio──▶
 - `internal/agent/` — agent registry (command, args, env, capabilities).
 - `internal/client/` — client-side ACP handlers: fs, terminal, permission.
 - `internal/session/` — conversation ↔ ACP session, process lifecycle.
-- `internal/openai/` — OpenAI types, the parameter policy, and the ACP→OpenAI mapping.
+- `internal/openai/` — OpenAI types, the parameter policy, the tool-call
+  envelope contract, and the ACP→OpenAI mapping.
 - `internal/handler/` — thin HTTP handlers and middleware.
 - `internal/config/` — config loading.
 - `reference/` — gitignored upstream checkouts used for design reference.
@@ -70,6 +71,11 @@ go test ./internal/openai/ -v
   `acp.ignored_params`. `internal/openai/params.go` is the single source of
   truth; a field added to a request struct without a rule is a bug, and a test
   asserts it cannot happen.
+- **The tool-call contract fails open.** ACP has no caller-defined functions, so
+  the contract lives in the prompt (`internal/openai/preamble.go`) and is
+  best-effort. Text held back by the stream must always be released as content
+  when it turns out not to be an envelope — losing an answer is worse than
+  missing a tool call. `internal/openai/toolstream.go` owns that rule.
 - **TDD.** New behavior and bug fixes start with a failing test. The full suite
   is green before work is reported.
 - **No real agents in tests.** Use the fake stdio agent fixture. No network, no

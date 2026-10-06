@@ -11,6 +11,30 @@ import (
 // cannot produce an unbounded payload.
 const MaxSteps = 64
 
+// BuildTurn renders the prompt for one turn, including the caller-tools
+// preamble when tools are in play.
+func BuildTurn(messages []Message, persistent bool, tools []Tool, choice ToolChoice) (string, error) {
+	body, err := turnBody(messages, persistent)
+	if err != nil {
+		return "", err
+	}
+	preamble := ToolPreamble(tools, choice)
+	if preamble == "" {
+		return body, nil
+	}
+	return preamble + "\n\n" + body, nil
+}
+
+// turnBody selects the text to send for this turn. Tool results take precedence
+// over the last user turn: they are the newest input to the session, and the
+// agent is waiting on them rather than on the user.
+func turnBody(messages []Message, persistent bool) (string, error) {
+	if results := RenderToolResults(trailingToolMessages(messages)); results != "" {
+		return results, nil
+	}
+	return BuildPrompt(messages, persistent)
+}
+
 // BuildPrompt renders the request's messages into the text handed to the agent.
 //
 // The two modes exist because an ACP session is stateful:
@@ -141,6 +165,11 @@ func planSummary(entries []acp.PlanEntry) string {
 	}
 	return strings.Join(parts, "; ")
 }
+
+// FinishToolCalls is the finish_reason for a turn that asked the caller to run
+// something. It is not derived from the ACP stop reason — the agent finished
+// normally; it is the OpenAI contract that changes shape.
+const FinishToolCalls = "tool_calls"
 
 // FinishReason maps an ACP stop reason onto the OpenAI finish_reason
 // vocabulary. The original value is preserved in the acp extension, so a

@@ -105,25 +105,68 @@ explicitly rejected, or accepted and reported back to you.
 
 | Disposition | Parameters | Behaviour |
 | ----------- | ---------- | --------- |
-| Supported | `model`, `messages`, `stream`, `stream_options`, `conversation_id`, `user`, `workspace` | Honoured. |
+| Supported | `model`, `messages`, `stream`, `stream_options`, `conversation_id`, `user`, `workspace`, `tools`, `tool_choice` | Honoured. |
 | Accepted and reported | `temperature`, `top_p`, `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias` | The agent owns its own sampling, so these cannot be honoured — and you cannot detect that as an error. They are listed in `acp.ignored_params` and in the `X-Acp2api-Ignored-Params` header. |
-| Rejected | `tools`, `tool_choice`, `functions`, `function_call`, `response_format`, `stop`, `max_tokens`, `max_completion_tokens`, `logprobs`, `top_logprobs`, `n > 1` | `400` with code `unsupported_parameter`, naming the offending field. Ignoring these would make the response violate your request. |
+| Rejected | `functions`, `function_call`, `response_format`, `stop`, `max_tokens`, `max_completion_tokens`, `logprobs`, `top_logprobs`, `n > 1` | `400` with code `unsupported_parameter`, naming the offending field. Ignoring these would make the response violate your request. |
 
 Rejections carry the reason and the stage that will implement the parameter:
 
 ```json
 {
   "error": {
-    "message": "parameter \"tools\" is not supported: caller-defined tools are not yet translated to ACP; they arrive in stage 2",
+    "message": "parameter \"logprobs\" is not supported: an ACP agent does not expose token probabilities, and synthesising them would be fabrication",
     "type": "invalid_request_error",
     "code": "unsupported_parameter",
-    "param": "tools"
+    "param": "logprobs"
   }
 }
 ```
 
 The policy table lives in `internal/openai/params.go` and is the single source
 of truth.
+
+## Tool calling
+
+`tools` works the way an OpenAI client expects: the model answers with
+`tool_calls` and `finish_reason: "tool_calls"`, you run the function, and you send
+the result back as a `role: "tool"` message.
+
+```json
+{
+  "choices": [{
+    "message": {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [{
+        "id": "call_1",
+        "type": "function",
+        "function": { "name": "get_weather", "arguments": "{\"city\":\"Paris\"}" }
+      }]
+    },
+    "finish_reason": "tool_calls"
+  }]
+}
+```
+
+**How it works, and why you should know.** ACP has no notion of a
+caller-defined function, so there is nothing to negotiate. The gateway puts the
+contract in the prompt: it tells the agent it is answering through a host that
+executes tools, lists the callable functions, and asks for a call as
+`{"tool_calls":[…]}` in the message body. It then parses that envelope out of
+the agent's text.
+
+That makes the contract **best-effort**. It is prompt engineering, not a
+protocol guarantee, so an agent may ignore it. The gateway fails open: if the
+envelope never appears, the agent's text is returned as ordinary content and no
+tool call is reported. A client should not assume a call will arrive.
+
+While a reply could still be an envelope, the gateway holds it back so the JSON
+never reaches you as prose. The hold is released as soon as the buffer provably
+cannot be an envelope, so a JSON-shaped *answer* is delayed, never swallowed.
+
+The agent keeps its own tools. This gateway lets it work in the workspace it was
+given; caller tools are additional, not a replacement. That is the opposite of
+`cli-agent-gateway`, whose host must never execute anything.
 
 ## The `acp` extension
 
