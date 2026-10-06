@@ -88,13 +88,11 @@ Do not split just to hit a number. Group by cohesive responsibility.
 ## Verification before committing
 
 ```sh
-lota check
+test -z "$(gofmt -l .)" && go vet ./... && go test ./... -race -count=1
 ```
 
-That runs `gofmt -l` (failing on any unformatted file), `go vet ./...`, and
-`go test ./... -race -count=1`. `lota.yml` is the source of truth for the dev
-commands; `lota smoke` additionally builds the binary and exercises the live API
-with curl.
+`gofmt -l` must print nothing. `lota.yml` covers only `dev`, `build` and
+`push`.
 
 ## Commits
 

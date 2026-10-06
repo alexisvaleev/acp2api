@@ -1,0 +1,15 @@
+serve:
+  desc: Run the OpenAI-compatible HTTP gateway
+  color: green
+  native: true
+  args:
+  - config|c:str?
+  - addr|a:str?
+  - workspace|w:str?
+  - permission|p:str?
+  - verbose|v:bool=false
+
+version:
+  desc: Show version
+  color: white
+  native: true

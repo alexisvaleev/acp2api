@@ -18,7 +18,7 @@ dev:
       -tmp_dir "bin" \
       -build.cmd "go build -o ./bin/$BINARY $PKG" \
       -build.entrypoint "./bin/$BINARY" \
-      -build.args_bin "--config config.yaml --addr $addr --workspace $workspace --permission $permission --verbose" \
+      -build.args_bin "serve --config config.yaml --addr $addr --workspace $workspace --permission $permission --verbose" \
       -build.exclude_dir "assets,tmp,vendor,testdata,bin,workspace,reference,.git"
 
 build:
@@ -28,18 +28,6 @@ build:
     set -euo pipefail
     go build -trimpath -ldflags "$LDFLAGS" -o "$OUT" $PKG
     ls -lh "$OUT"
-
-install:
-  desc: Install the binary into ~/.local/bin
-  color: green
-  depends:
-  - build
-  script: |
-    set -euo pipefail
-    mkdir -p "$HOME/.local/bin"
-    cp -f "$OUT" "$HOME/.local/bin/$BINARY"
-    chmod +x "$HOME/.local/bin/$BINARY"
-    echo "installed -> $HOME/.local/bin/$BINARY"
 
 push:
   desc: Push to GitHub

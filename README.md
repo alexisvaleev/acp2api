@@ -17,14 +17,12 @@ and SDKs speak HTTP and expect an OpenAI-shaped API. This is the converter.
 
 ## Running it
 
-The dev commands live in `lota.yml`:
+`lota.yml` carries the dev, build and push commands:
 
 ```sh
-lota agents       # which agent CLIs are installed on this machine
-lota dev          # run the gateway under air: rebuilds and restarts on change
-lota smoke        # build, start, curl the API, stop
-lota conformance  # assert the whole HTTP surface against a live server
-lota check        # format, vet, race tests
+lota dev     # run the gateway under air: rebuilds and restarts on change
+lota build   # build the binary to bin/acp2api
+lota push    # push the current branch to GitHub
 ```
 
 `lota dev` takes flags:
@@ -45,11 +43,14 @@ Without `lota`, the binary is ordinary:
 
 ```sh
 go build -o bin/acp2api ./cmd/acp2api
-ACP2API_TOKEN=dev-token ./bin/acp2api --workspace ~/code/some-repo --verbose
+ACP2API_TOKEN=dev-token ./bin/acp2api serve --workspace ~/code/some-repo --verbose
 ```
 
-Flags: `--config`, `--addr`, `--workspace`, `--permission`, `--verbose`,
-`--version`. Environment: `ACP2API_ADDR`, `ACP2API_TOKEN`, `ACP2API_WORKSPACE`,
+The command line is the embedded Lota engine (`cmd/acp2api/cli.yml`), so the
+binary carries its own commands: `serve` starts the gateway, `version` prints
+the version, and running `acp2api` with no arguments prints help. `serve` takes
+`--config`, `--addr`, `--workspace`, `--permission` and `--verbose`.
+Environment: `ACP2API_ADDR`, `ACP2API_TOKEN`, `ACP2API_WORKSPACE`,
 `ACP2API_PERMISSION`.
 
 ### Logs
@@ -61,8 +62,8 @@ INFO [session] | agent ready | agent=devin pid=91240 workspace=. images=true
 ```
 
 The subsystem — `acp2api`, `session`, `agent`, `acp`, `handler` — is shown in
-brackets, followed by the message and its `key=value` attributes. `--verbose`
-adds debug records and colors the level name.
+brackets, followed by the message and its `key=value` attributes. `--verbose` on
+`serve` adds debug records and colors the level name.
 
 ### Quick start
 
@@ -70,7 +71,7 @@ adds debug records and colors the level name.
 go build -o bin/acp2api ./cmd/acp2api
 
 export ACP2API_TOKEN=change-me
-./bin/acp2api --workspace /path/to/your/repo
+./bin/acp2api serve --workspace /path/to/your/repo
 ```
 
 ```sh
@@ -236,7 +237,7 @@ explicitly rejected, or accepted and reported back to you.
 unbounded `n` would be an unbounded cost. Streaming is refused together with
 `n > 1` and with an array prompt: the choices would interleave.
 
-Rejections carry the reason and the stage that will implement the parameter:
+Rejections carry the reason and the offending parameter:
 
 ```json
 {
@@ -350,8 +351,8 @@ estimated from text length.
 ## Configuration
 
 YAML, loaded from `--config`, then overridden by environment variables, then by
-flags. See `config.example.yaml`. JSON is accepted too — YAML is a superset, so
-an existing `config.json` keeps working through the same parser.
+the `serve` flags. See `config.example.yaml`. JSON is accepted too — YAML is a
+superset, so an existing `config.json` keeps working through the same parser.
 
 `${VAR}` and `${VAR:-default}` are substituted before parsing, so one file can
 serve as a template for several environments. An unset variable with no default
@@ -496,7 +497,7 @@ failure.
 ## Development
 
 ```sh
-go build ./... && go vet ./... && go test ./...
+go build ./... && go vet ./... && go test ./... -race
 ```
 
 Tests never touch a real agent: they run a scriptable fake ACP agent
@@ -504,6 +505,23 @@ Tests never touch a real agent: they run a scriptable fake ACP agent
 
 Architecture, conventions, and file-size limits live in
 `.devin/rules/global_rules.md`. The agent-facing brief is `AGENTS.md`.
+
+## Releases
+
+A release is cut by pushing a `v*` tag — nothing is built by hand:
+
+```sh
+git tag v0.2.0
+git push origin v0.2.0        # or: lota push v0.2.0
+```
+
+`.github/workflows/release.yml` then builds `acp2api` for linux, macOS and
+Windows (amd64 and arm64), writes `checksums.txt`, and publishes a GitHub
+Release with the binaries attached. The tag is compiled in, so `acp2api
+version` and the version the gateway reports to an agent match the release.
+
+`.github/workflows/ci.yml` runs `gofmt`, `go vet` and the race tests on every
+push to `main` and on every pull request.
 
 ## Prior art
 

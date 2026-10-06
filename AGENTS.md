@@ -27,7 +27,9 @@ OpenAI client ──HTTP/SSE──▶ gateway ──JSON-RPC over stdio──▶
 
 ## Repository map
 
-- `cmd/acp2api/` — entry point, wiring, graceful shutdown.
+- `cmd/acp2api/` — entry point and wiring. The CLI is the embedded Lota engine
+  (`cli.yml` plus native handlers): `serve` runs the gateway, `version` prints
+  the version, and no arguments prints help.
 - `internal/acp/` — JSON-RPC 2.0 client over stdio + ACP protocol types.
 - `internal/agent/` — agent registry (command, args, env, capabilities) and the
   `Module` interface that carries per-agent knowledge.
@@ -42,6 +44,8 @@ OpenAI client ──HTTP/SSE──▶ gateway ──JSON-RPC over stdio──▶
 - `internal/logger/` — the slog handler and console format for the process log:
   `LEVEL [module] | message | key=value`, module lifted from the `module`
   attribute, level colored under `--verbose`.
+- `.github/workflows/` — CI (`ci.yml`) and the tag-triggered release
+  (`release.yml`).
 - Deployment is not containerised for the gateway: it runs on the host
   (`lota dev`), because an agent CLI reads the user's home and needs the
   runtimes its MCP servers call. `docker-compose.yml` (gitignored, like
@@ -50,18 +54,15 @@ OpenAI client ──HTTP/SSE──▶ gateway ──JSON-RPC over stdio──▶
 
 ## Commands
 
-`lota.yml` wraps everything; prefer it over raw commands.
+`lota.yml` carries the dev, build and push commands:
 
 ```sh
-lota check       # full verification: format, vet, race tests
-lota dev         # run the gateway in development mode (air: rebuild + restart)
-lota agents      # which agent CLIs are installed
-lota smoke       # build, start, curl the API, stop
-lota conformance # assert the whole HTTP surface against a live server
-lota build       # produce bin/acp2api
+lota dev     # run the gateway in development mode (air: rebuild + restart)
+lota build   # produce bin/acp2api
+lota push    # push the current branch to GitHub
 ```
 
-Raw equivalents, for reference:
+Verification is plain Go:
 
 ```bash
 go build ./... && go vet ./... && go test ./... -race
@@ -69,6 +70,13 @@ go build ./... && go vet ./... && go test ./... -race
 # Run a single package's tests
 go test ./internal/openai/ -v
 ```
+
+The gateway binary runs as `bin/acp2api serve`; its command line is the embedded
+Lota engine (`cmd/acp2api/cli.yml`), not the `flag` package.
+
+A release is cut by pushing a `v*` tag; `.github/workflows/release.yml` builds
+the cross-platform binaries and publishes them. `.github/workflows/ci.yml` runs
+the same check on every push to `main` and on pull requests.
 
 > When writing a `lota.yml` script, remember Lota interpolates `$name`: a shell
 > variable is only recognised as local when the assignment starts a line (or
@@ -123,7 +131,7 @@ type Module interface {
 ```
 
 **The dependency direction is the rule.** The core never imports a module;
-`cmd/acp2api/main.go` assembles them in `builtinModules()` and passes them in.
+`cmd/acp2api` assembles them in `builtinModules()` and passes them in.
 Adding an agent's knowledge means adding a package and one line there — never a
 switch on an agent's name in the core.
 
