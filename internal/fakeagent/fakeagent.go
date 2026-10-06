@@ -37,6 +37,12 @@ import (
 	"sync"
 )
 
+// fakeModels is the model catalog every fake session advertises.
+var fakeModels = []map[string]any{
+	{"value": "fake-model-1", "name": "Fake Model 1"},
+	{"value": "fake-model-2", "name": "Fake Model 2"},
+}
+
 // fakeModes is the session mode list every fake session advertises.
 var fakeModes = []map[string]any{
 	{"id": "build", "name": "Build"},
@@ -98,6 +104,14 @@ type agent struct {
 	authenticated bool
 	authMetaKeys  int
 	mode          string
+	model         string
+}
+
+// Model reports the model the gateway last selected.
+func (a *agent) Model() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.model
 }
 
 // Mode reports the session mode the gateway last selected.
@@ -242,10 +256,7 @@ func (a *agent) handleRequest(msg message) {
 				"id":           "model",
 				"category":     "model",
 				"currentValue": "fake-model-1",
-				"options": []any{
-					map[string]any{"value": "fake-model-1", "name": "Fake Model 1"},
-					map[string]any{"value": "fake-model-2", "name": "Fake Model 2"},
-				},
+				"options":      fakeModels,
 			}},
 		})
 	case "session/set_mode":
@@ -270,6 +281,31 @@ func (a *agent) handleRequest(msg message) {
 		a.mu.Lock()
 		a.mode = p.ModeID
 		a.mu.Unlock()
+		a.write(map[string]any{"jsonrpc": "2.0", "id": rawID(msg.ID), "result": nil})
+	case "session/set_config_option":
+		var p struct {
+			ConfigID string `json:"configId"`
+			Value    string `json:"value"`
+		}
+		_ = json.Unmarshal(msg.Params, &p)
+		if p.ConfigID == "model" {
+			known := false
+			for _, model := range fakeModels {
+				if model["value"] == p.Value {
+					known = true
+					break
+				}
+			}
+			if !known {
+				a.write(map[string]any{"jsonrpc": "2.0", "id": rawID(msg.ID), "error": map[string]any{
+					"code": -32602, "message": "unknown model " + p.Value,
+				}})
+				return
+			}
+			a.mu.Lock()
+			a.model = p.Value
+			a.mu.Unlock()
+		}
 		a.write(map[string]any{"jsonrpc": "2.0", "id": rawID(msg.ID), "result": nil})
 	case "session/prompt":
 		a.turn(msg)

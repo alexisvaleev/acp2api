@@ -66,21 +66,32 @@ func (s *Server) Handler() http.Handler {
 	return s.withAuth(mux)
 }
 
-// handleGetModel serves GET /v1/models/{id}.
+// handleGetModel serves GET /v1/models/{id}, for an agent or one of its models.
 func (s *Server) handleGetModel(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	created := s.started.Unix()
+
 	for _, a := range s.manager.Agents() {
-		if a.ID != id {
-			continue
+		if a.ID == id {
+			writeJSON(w, http.StatusOK, openai.Model{
+				ID: a.ID, Object: openai.ObjectModel, Created: created, OwnedBy: "acp2api",
+			})
+			return
 		}
-		writeJSON(w, http.StatusOK, openai.Model{
-			ID:      a.ID,
-			Object:  openai.ObjectModel,
-			Created: s.started.Unix(),
-			OwnedBy: "acp2api",
-		})
-		return
 	}
+
+	// A model id arrives as "agent/model" when the caller encodes the slash.
+	if agentID, modelID, ok := strings.Cut(id, "/"); ok {
+		for _, model := range s.manager.Models(agentID) {
+			if model.ID == modelID {
+				writeJSON(w, http.StatusOK, openai.Model{
+					ID: id, Object: openai.ObjectModel, Created: created, OwnedBy: "acp2api",
+				})
+				return
+			}
+		}
+	}
+
 	writeError(w, http.StatusNotFound, openai.ErrTypeInvalidRequest, "model_not_found",
 		fmt.Sprintf("model %q is unknown; available: %s", id, strings.Join(agentIDs(s.manager), ", ")), "")
 }
@@ -106,10 +117,17 @@ func (s *Server) handleRoot(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-// handleModels lists the configured agents as OpenAI models.
+// handleModels lists the configured agents as OpenAI models, plus each agent's
+// own models once its catalog has been discovered.
+//
+// A model id is "agent/model" — "devin/claude-opus-5-5-medium" — which is what
+// the chat endpoints accept in their model field. An agent whose catalog is not
+// known yet appears alone; discovery costs the agent's cold start, so it is not
+// done here.
 func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
 	created := s.started.Unix()
 	list := openai.ModelList{Object: openai.ObjectList}
+
 	for _, a := range s.manager.Agents() {
 		list.Data = append(list.Data, openai.Model{
 			ID:      a.ID,
@@ -117,6 +135,14 @@ func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
 			Created: created,
 			OwnedBy: "acp2api",
 		})
+		for _, model := range s.manager.Models(a.ID) {
+			list.Data = append(list.Data, openai.Model{
+				ID:      a.ID + "/" + model.ID,
+				Object:  openai.ObjectModel,
+				Created: created,
+				OwnedBy: "acp2api",
+			})
+		}
 	}
 	writeJSON(w, http.StatusOK, list)
 }

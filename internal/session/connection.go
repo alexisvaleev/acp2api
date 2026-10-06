@@ -38,6 +38,9 @@ type connection struct {
 
 	// capabilities is what the agent reported during initialize.
 	capabilities connectionCapabilities
+	// modelOption is the agent's model selector, captured from session/new. It
+	// is the only place the gateway learns which model ids exist.
+	modelOption *acp.ConfigOption
 }
 
 // connectionCapabilities is the part of the agent's initialize result the
@@ -316,21 +319,18 @@ func (c *connection) newSession(ctx context.Context, model string) (*state, erro
 		return nil, err
 	}
 
+	// The catalog is the only place the gateway learns which model ids exist,
+	// so it is captured before anything tries to select one.
+	c.captureCatalog(res)
+
 	st := &state{id: res.SessionID, client: c.client, handler: handler, lastUsed: time.Now()}
 
 	if err := c.applyMode(ctx, res); err != nil {
 		return nil, err
 	}
-
-	// Selecting a model is best-effort: an agent that advertises no model
-	// config option still works, it just runs its own default.
 	if model != "" {
-		if _, err := c.client.Request(ctx, acp.MethodSessionSetConfig, acp.SetConfigOptionRequest{
-			SessionID: res.SessionID,
-			ConfigID:  "model",
-			Value:     model,
-		}); err != nil {
-			slog.Debug("session: model selection rejected", "agent", c.agent.ID, "model", model, "error", err)
+		if err := c.selectModel(ctx, res.SessionID, model); err != nil {
+			return nil, err
 		}
 	}
 	return st, nil

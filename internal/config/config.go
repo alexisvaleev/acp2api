@@ -67,6 +67,12 @@ type Config struct {
 	// agent. "plan" and "ask" are read-only on most agents. The value is
 	// checked against what each agent advertises.
 	Mode string `json:"mode" yaml:"mode"`
+	// DiscoverModels reads each agent's model catalog in the background at
+	// startup, so /v1/models lists the models and not only the agents.
+	//
+	// Off by default: discovery starts every agent, which costs its cold start.
+	// Without it the catalog still appears, lazily, once an agent is first used.
+	DiscoverModels bool `json:"discover_models" yaml:"discover_models"`
 }
 
 // AgentConfig describes one agent CLI, overriding or extending the built-ins.

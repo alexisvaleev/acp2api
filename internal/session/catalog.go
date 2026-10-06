@@ -1,0 +1,232 @@
+package session
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"sort"
+	"strings"
+
+	"github.com/quonaro/acp2api/internal/acp"
+)
+
+// ModelInfo is one model an agent advertises.
+type ModelInfo struct {
+	// ID is the value to pass as the model half of "agent/model".
+	ID string
+	// Name is the agent's own label for it.
+	Name string
+	// Description is optional extra text from the agent.
+	Description string
+}
+
+// maxListedModels caps how many ids an error message lists. Some agents
+// advertise over a hundred, and an error nobody can read is not an error
+// message.
+const maxListedModels = 20
+
+// captureCatalog records the agent's model option from session/new.
+//
+// The catalog is the same for every session on a connection, so the first
+// session captures it. It is the only place the gateway learns which model ids
+// exist — ACP has no separate discovery call.
+func (c *connection) captureCatalog(session acp.NewSessionResponse) {
+	for _, option := range session.ConfigOptions {
+		if !isModelOption(option) {
+			continue
+		}
+		c.mu.Lock()
+		c.modelOption = &option
+		c.mu.Unlock()
+		slog.Debug("session: model catalog captured",
+			"agent", c.agent.ID, "option", option.ID, "models", len(option.Options),
+			"current", option.CurrentValue, "sample", sampleValues(option.Options))
+		return
+	}
+}
+
+// sampleValues renders the first few option values for a debug line.
+func sampleValues(options []acp.ConfigOptionValue) string {
+	limit := min(3, len(options))
+	parts := make([]string, 0, limit)
+	for _, option := range options[:limit] {
+		parts = append(parts, option.Value)
+	}
+	return strings.Join(parts, ",")
+}
+
+// isModelOption reports whether a config option is the model selector.
+func isModelOption(option acp.ConfigOption) bool {
+	if option.Category == "model" {
+		return true
+	}
+	// Fall back to the id, and never mistake the mode or thought-level selects
+	// for the model one.
+	if option.ID == "mode" || option.Category != "" {
+		return false
+	}
+	return strings.Contains(option.ID, "model")
+}
+
+// Catalog returns the agent's advertised models, or nil when it has not been
+// discovered yet — the catalog only exists once a session is open.
+func (c *connection) Catalog() []ModelInfo {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return modelInfos(c.modelOption)
+}
+
+// modelInfos renders a model option as a sorted list.
+func modelInfos(option *acp.ConfigOption) []ModelInfo {
+	if option == nil {
+		return nil
+	}
+	out := make([]ModelInfo, 0, len(option.Options))
+	for _, value := range option.Options {
+		if strings.TrimSpace(value.Value) == "" {
+			continue
+		}
+		name := value.Name
+		if name == "" {
+			name = value.Value
+		}
+		out = append(out, ModelInfo{ID: value.Value, Name: name, Description: value.Description})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// selectModel applies a requested model to a session.
+//
+// An unknown id is an error, never a silent no-op: the caller asked for a
+// specific model, and running the agent's default instead would answer a
+// question nobody asked. The error lists what the agent does offer.
+func (c *connection) selectModel(ctx context.Context, sessionID, model string) error {
+	c.mu.Lock()
+	option := c.modelOption
+	c.mu.Unlock()
+
+	if option == nil {
+		return fmt.Errorf(
+			"session: agent %q advertises no model to select, so model %q cannot be honoured",
+			c.agent.ID, model)
+	}
+
+	for _, candidate := range option.Options {
+		if candidate.Value != model {
+			continue
+		}
+		if _, err := c.client.Request(ctx, acp.MethodSessionSetConfig, acp.SetConfigOptionRequest{
+			SessionID: sessionID,
+			ConfigID:  option.ID,
+			Value:     model,
+		}); err != nil {
+			return fmt.Errorf("session: select model %q on agent %q: %w", model, c.agent.ID, err)
+		}
+		slog.Debug("session: model selected", "agent", c.agent.ID, "model", model)
+		return nil
+	}
+
+	return fmt.Errorf("session: agent %q has no model %q; %s",
+		c.agent.ID, model, describeModels(modelInfos(option)))
+}
+
+// describeModels renders the available ids for an error message.
+func describeModels(models []ModelInfo) string {
+	if len(models) == 0 {
+		return "it advertises no models"
+	}
+	ids := make([]string, 0, len(models))
+	for _, model := range models {
+		ids = append(ids, model.ID)
+	}
+	if len(ids) <= maxListedModels {
+		return "available: " + strings.Join(ids, ", ")
+	}
+	return fmt.Sprintf("available: %s and %d more",
+		strings.Join(ids[:maxListedModels], ", "), len(ids)-maxListedModels)
+}
+
+// Models returns the models an agent has advertised, or nil when none of its
+// connections has opened a session yet.
+//
+// The catalog is discovered, not configured: it comes from the agent, and only
+// exists once the agent has been talked to. An agent with no live connection is
+// simply absent from the result rather than costing a cold start.
+func (m *Manager) Models(agentID string) []ModelInfo {
+	m.mu.Lock()
+	conns := make([]*connection, 0, len(m.conns))
+	for _, c := range m.conns {
+		conns = append(conns, c)
+	}
+	m.mu.Unlock()
+
+	for _, c := range conns {
+		if c.agent.ID != agentID {
+			continue
+		}
+		if catalog := c.Catalog(); len(catalog) > 0 {
+			return catalog
+		}
+	}
+	return nil
+}
+
+// Discover opens a connection to every registered agent so its model catalog
+// becomes known, then leaves the processes to the idle reaper.
+//
+// It is best-effort and meant to run in the background: an agent that cannot
+// start is logged and skipped, because failing to enumerate models is not a
+// reason to refuse the requests that do not name one.
+func (m *Manager) Discover(ctx context.Context) {
+	for _, a := range m.registry.List() {
+		if ctx.Err() != nil {
+			return
+		}
+		if len(m.Models(a.ID)) > 0 {
+			continue
+		}
+		workspace := a.Workspace
+		if workspace == "" {
+			workspace = m.opts.Workspace
+		}
+		conn, err := m.connection(ctx, a, workspace)
+		if err != nil {
+			slog.Warn("session: model discovery failed", "agent", a.ID, "error", err)
+			continue
+		}
+		if err := conn.discoverCatalog(ctx); err != nil {
+			slog.Warn("session: model discovery failed", "agent", a.ID, "error", err)
+			continue
+		}
+		slog.Info("session: models discovered", "agent", a.ID, "count", len(m.Models(a.ID)))
+	}
+}
+
+// discoverCatalog opens and closes one session so the agent advertises its
+// catalog, without running a turn.
+func (c *connection) discoverCatalog(ctx context.Context) error {
+	if len(c.Catalog()) > 0 {
+		return nil
+	}
+	c.createMu.Lock()
+	defer c.createMu.Unlock()
+	if len(c.Catalog()) > 0 {
+		return nil
+	}
+
+	raw, err := c.client.Request(ctx, acp.MethodSessionNew, acp.NewSessionRequest{
+		Cwd:        c.workspace,
+		McpServers: []acp.McpServer{},
+	})
+	if err != nil {
+		return fmt.Errorf("session/new: %w", err)
+	}
+	var res acp.NewSessionResponse
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return fmt.Errorf("decode session/new: %w", err)
+	}
+	c.captureCatalog(res)
+	return nil
+}

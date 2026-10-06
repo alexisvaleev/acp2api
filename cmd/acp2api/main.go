@@ -113,6 +113,12 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if cfg.DiscoverModels {
+		// Background, and best-effort: failing to enumerate models is not a
+		// reason to refuse the requests that do not name one.
+		go manager.Discover(ctx)
+	}
+
 	serveErr := make(chan error, 1)
 	go func() {
 		logger.Info("acp2api listening",

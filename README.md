@@ -119,8 +119,25 @@ this table and the router agree.
 `model` is the agent selector:
 
 - `devin` — run the Devin agent with its own default model.
-- `devin/opus` — run Devin and select `opus` through the agent's model config
-  option. Best-effort: an agent that advertises no model option runs its default.
+- `devin/swe-2-high` — run Devin and select that model.
+
+The list after the slash is **the agent's own catalog**, discovered from the
+agent, not configured here. It appears on `/v1/models` as `agent/model` entries
+once the agent has been talked to, because ACP has no separate discovery call —
+the catalog arrives with the first session.
+
+An unknown model is refused with the list of ones the agent does offer. It is
+never quietly replaced by the agent's default: a caller who named a model asked a
+specific question, and answering a different one is worse than failing.
+
+Set `discover_models: true` to read every agent's catalog in the background at
+startup, so `/v1/models` is complete before the first request. It is off by
+default because discovery starts each agent, which costs its cold start.
+
+Agents vary in what they advertise. Devin lists display names (`swe-2-high`,
+`claude-opus-5-5-medium`) alongside internal enum ids (`MODEL_CLAUDE_4_5_OPUS`);
+both are selectable, and both are listed, because filtering what an agent
+advertises would mean guessing which of its ids are real.
 
 ## Conversations
 
@@ -255,6 +272,7 @@ expanded.
 | `read_only` | `false` | Refuses filesystem writes, and withholds the write capability at `initialize`. |
 | `mode` | agent default | Session mode selected after opening a session, e.g. `plan` or `ask`. Checked against what the agent advertises. |
 | `proxy` | none | Routes the agents' outbound traffic; `url`, optional `http`/`https`/`no_proxy`. |
+| `discover_models` | `false` | Read each agent's model catalog in the background at startup, so `/v1/models` lists models as well as agents. |
 
 Every agent entry may override `workspace`, `read_only`, `mode` and `proxy`, and
 may add its own `env`. A per-agent proxy or workspace replaces the global one

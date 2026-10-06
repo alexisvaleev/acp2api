@@ -43,6 +43,12 @@ read_only: false
 # does, rather than quietly running in its own default.
 mode: ""
 
+# Read each agent's model catalog in the background at startup, so /v1/models
+# lists the models and not only the agents. Off by default: discovery starts
+# every agent, which costs its cold start. Without it the catalog still appears,
+# lazily, once an agent is first used.
+discover_models: false
+
 # Serve only the agents listed below, so /v1/models matches what the host can
 # actually run. Without it the list can only add and override.
 disable_builtins: false
