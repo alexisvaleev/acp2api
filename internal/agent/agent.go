@@ -30,6 +30,10 @@ type Agent struct {
 	// authenticate `_meta.api_key`, for a headless login. Empty sends no key,
 	// which is right for an agent already logged in on this machine.
 	APIKeyEnv string
+	// APIKey is the credential resolved once at startup, either by the agent's
+	// module or from APIKeyEnv. It is held for the process lifetime and is
+	// never logged.
+	APIKey string
 	// AllowInteractiveAuth permits an authenticate call that may open a browser
 	// or prompt. It is off by default: a daemon must not open windows, and an
 	// agent that needs credentials should be given a key instead.
@@ -46,6 +50,9 @@ func (a Agent) Capabilities() map[string]any {
 	}
 	return DefaultCapabilities()
 }
+
+// HasKey reports whether a credential was resolved for this agent.
+func (a Agent) HasKey() bool { return a.APIKey != "" }
 
 // DefaultCapabilities advertises exactly what this gateway implements: reading
 // and writing files. Terminals are deliberately not advertised — a headless

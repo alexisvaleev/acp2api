@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/quonaro/acp2api/internal/agent"
+	"github.com/quonaro/acp2api/internal/agent/devin"
 	"github.com/quonaro/acp2api/internal/client"
 	"github.com/quonaro/acp2api/internal/config"
 	"github.com/quonaro/acp2api/internal/handler"
@@ -71,7 +72,7 @@ func run() error {
 		return err
 	}
 
-	registry, err := cfg.Registry()
+	registry, err := cfg.BuildRegistry(builtinModules(), agent.OS())
 	if err != nil {
 		return err
 	}
@@ -135,6 +136,16 @@ func run() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return httpServer.Shutdown(shutdownCtx)
+}
+
+// builtinModules lists the per-agent modules this build assembles.
+//
+// This is the edge the modules are wired at: the core never imports them, so
+// adding an agent's knowledge means adding a line here and nothing else.
+func builtinModules() []agent.Module {
+	return []agent.Module{
+		devin.New(),
+	}
 }
 
 // agentIDs returns the configured agent ids, for the startup log line.

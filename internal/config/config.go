@@ -178,6 +178,34 @@ func (c Config) Validate() error {
 	return nil
 }
 
+// BuildRegistry assembles the agents, applies the per-agent modules, resolves
+// each agent's credential once, and returns the registry.
+//
+// Credentials are resolved here, at startup, rather than on every spawn: a
+// module can read the key the agent already stored, and the operator does not
+// have to duplicate it into the service environment.
+func (c Config) BuildRegistry(modules []agent.Module, source agent.Source) (*agent.Registry, error) {
+	base, err := c.Registry()
+	if err != nil {
+		return nil, err
+	}
+
+	agents, err := agent.Apply(base.List(), modules)
+	if err != nil {
+		return nil, err
+	}
+	agents, err = agent.ResolveCredentials(agents, modules, source)
+	if err != nil {
+		return nil, err
+	}
+
+	registry := agent.NewRegistry()
+	for _, a := range agents {
+		registry.Register(a)
+	}
+	return registry, nil
+}
+
 // Registry builds the agent registry: built-ins first, then configuration
 // overrides, so a config entry can retarget a built-in command. With
 // DisableBuiltins only the configured agents exist.

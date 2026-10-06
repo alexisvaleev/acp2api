@@ -36,7 +36,20 @@ cmd → handler → openai → session → client → acp
 
 - `acp` imports nothing from this module except stdlib.
 - `handler` never imports `acp` directly; it goes through `session`/`openai`.
-- `agent` is a leaf: it is pure data plus capability builders.
+- `agent` is a leaf: it is pure data plus capability builders, and the `Module`
+  interface that per-agent packages implement.
+
+## The module boundary
+
+Agent-specific knowledge never enters the core. It lives in
+`internal/agent/<name>/` behind `agent.Module`, and `cmd` assembles it.
+
+- The core must not import a module. `internal/agent` defines the interface;
+  `internal/agent/devin` implements it; `cmd/acp2api` wires them.
+- The core must never switch on an agent's name, command, or id.
+- A module names an agent that is not registered → startup error, not a no-op.
+- Credentials are resolved once, at startup, and held on the `Agent`. A module
+  reads the agent's own store; an explicit `api_key_env` wins over discovery.
 
 ## Non-negotiables
 

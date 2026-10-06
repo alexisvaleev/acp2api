@@ -31,6 +31,15 @@ func fakeRegistry() *agent.Registry {
 
 func newManager(t *testing.T, registry *agent.Registry, env map[string]string) (*session.Manager, string) {
 	t.Helper()
+
+	// Production resolves credentials once at startup; mirror that here so the
+	// session layer sees the same shape it does in the daemon.
+	agents, err := agent.ResolveCredentials(registry.List(), nil, agent.OS())
+	if err != nil {
+		t.Fatalf("resolve credentials: %v", err)
+	}
+	registry = agent.NewRegistry(agents...)
+
 	workspace := t.TempDir()
 	merged := map[string]string{"ACP2API_FAKE_AGENT": "1"}
 	for k, v := range env {
@@ -194,23 +203,6 @@ func TestAgentRequiringAuthIsAuthenticated(t *testing.T) {
 
 	if _, err := m.Prompt(context.Background(), session.Request{Model: "fake", Prompt: "hi"}, noop); err != nil {
 		t.Fatalf("the gateway must authenticate before opening a session: %v", err)
-	}
-}
-
-func TestMissingAPIKeyEnvIsReportedClearly(t *testing.T) {
-	registry := agent.NewRegistry(agent.Agent{
-		ID:        "fake",
-		Command:   os.Args[0],
-		APIKeyEnv: "ACP2API_TEST_ABSENT_KEY",
-	})
-	m, _ := newManager(t, registry, map[string]string{"FAKE_AGENT_REQUIRE_AUTH": "1"})
-
-	_, err := m.Prompt(context.Background(), session.Request{Model: "fake", Prompt: "hi"}, noop)
-	if err == nil {
-		t.Fatal("expected a missing api key variable to be reported")
-	}
-	if !strings.Contains(err.Error(), "ACP2API_TEST_ABSENT_KEY") {
-		t.Fatalf("error should name the missing variable: %v", err)
 	}
 }
 

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"sync"
 	"time"
 
@@ -151,17 +150,16 @@ func (c *connection) authenticate(ctx context.Context, cl *acp.Client, a agent.A
 
 	request := acp.AuthenticateRequest{MethodID: authMethodID(a, init)}
 
-	if a.APIKeyEnv != "" {
-		key := os.Getenv(a.APIKeyEnv)
-		if key == "" {
-			return fmt.Errorf(
-				"session: agent %q requires authentication and %s is not set; "+
-					"put the agent's API key in that variable",
-				a.ID, a.APIKeyEnv)
-		}
-		request.Meta = map[string]any{"api_key": key}
-	} else if !a.AllowInteractiveAuth {
-		slog.Warn("session: skipping authenticate because no key is configured",
+	switch {
+	case a.HasKey():
+		// Resolved once at startup, by the agent's module or from APIKeyEnv.
+		request.Meta = map[string]any{"api_key": a.APIKey}
+	case a.APIKeyEnv != "":
+		return fmt.Errorf(
+			"session: agent %q is configured with api_key_env %q but no value was resolved at startup",
+			a.ID, a.APIKeyEnv)
+	case !a.AllowInteractiveAuth:
+		slog.Warn("session: skipping authenticate because no key was resolved",
 			"agent", a.ID,
 			"advertised_method", request.MethodID,
 			"hint", "set api_key_env to the variable holding the agent's key, "+

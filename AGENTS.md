@@ -29,7 +29,10 @@ OpenAI client ──HTTP/SSE──▶ gateway ──JSON-RPC over stdio──▶
 
 - `cmd/acp2api/` — entry point, wiring, graceful shutdown.
 - `internal/acp/` — JSON-RPC 2.0 client over stdio + ACP protocol types.
-- `internal/agent/` — agent registry (command, args, env, capabilities).
+- `internal/agent/` — agent registry (command, args, env, capabilities) and the
+  `Module` interface that carries per-agent knowledge.
+- `internal/agent/<name>/` — one module per agent that needs one; currently
+  `devin`. The core never imports these.
 - `internal/client/` — client-side ACP handlers: fs, terminal, permission.
 - `internal/session/` — conversation ↔ ACP session, process lifecycle.
 - `internal/openai/` — OpenAI types, the parameter policy, the tool-call
@@ -90,6 +93,36 @@ go test ./internal/openai/ -v
 - **Docs in the same change.** Behavior, config, or agent-support changes update
   this file and the README together.
 - **English** for code comments, commit messages, and rule files.
+
+## Agent modules
+
+The core drives any ACP agent through one generic path. Everything specific to
+one agent lives in a module under `internal/agent/<name>/`, behind the
+`agent.Module` interface:
+
+```go
+type Module interface {
+	ID() string
+	Augment(Agent) Agent
+	Credential(Source) (string, error)
+}
+```
+
+**The dependency direction is the rule.** The core never imports a module;
+`cmd/acp2api/main.go` assembles them in `builtinModules()` and passes them in.
+Adding an agent's knowledge means adding a package and one line there — never a
+switch on an agent's name in the core.
+
+A module is the right place for knowledge that is true of one agent and false of
+the others: where it keeps its credentials, how to authenticate without opening
+a window, which model catalog it advertises. `devin` is the worked example: it
+reads `windsurf_api_key` from the CLI's own store, because under ACP the Devin
+CLI refuses its own login and its only advertised method starts a browser flow.
+
+Credentials are resolved **once, at startup**, and held on the `Agent` for every
+spawn. A configured `api_key_env` wins; otherwise the module is asked. A
+configured-but-unset variable stops the process at startup rather than surfacing
+on the first request.
 
 ## Detailed rules
 
