@@ -6,14 +6,14 @@
 package config
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/quonaro/acp2api/internal/agent"
 )
@@ -36,162 +36,49 @@ const (
 // Config is the gateway's runtime configuration.
 type Config struct {
 	// Addr is the listen address. Defaults to loopback only.
-	Addr string `json:"addr"`
+	Addr string `json:"addr" yaml:"addr"`
 	// Workspace is the default agent working directory. Empty means the
 	// process's working directory.
-	Workspace string `json:"workspace"`
+	Workspace string `json:"workspace" yaml:"workspace"`
 	// Token is the bearer token required on /v1/* routes. An empty token is
 	// only accepted together with AllowNoAuth.
-	Token string `json:"token"`
+	Token string `json:"token" yaml:"token"`
 	// Permission is the permission policy: "allow" or "deny".
-	Permission string `json:"permission"`
+	Permission string `json:"permission" yaml:"permission"`
 	// RequestTimeoutSeconds bounds one ACP request. Zero uses the default.
-	RequestTimeoutSeconds int `json:"request_timeout_seconds"`
+	RequestTimeoutSeconds int `json:"request_timeout_seconds" yaml:"request_timeout_seconds"`
 	// SessionTTLSeconds closes idle sessions and agent processes. Zero uses the
 	// default; a negative value disables reaping.
-	SessionTTLSeconds int `json:"session_ttl_seconds"`
+	SessionTTLSeconds int `json:"session_ttl_seconds" yaml:"session_ttl_seconds"`
 	// Agents overrides built-in agents by id and adds new ones.
-	Agents []AgentConfig `json:"agents"`
+	Agents []AgentConfig `json:"agents" yaml:"agents"`
 	// DisableBuiltins removes the built-in agents, so only those listed in
 	// Agents are served. Without it the Agents list can only add and override,
 	// which makes /v1/models advertise agents the host cannot run.
-	DisableBuiltins bool `json:"disable_builtins"`
+	DisableBuiltins bool `json:"disable_builtins" yaml:"disable_builtins"`
 	// Proxy routes the agents' outbound traffic. The gateway itself makes no
 	// outbound requests, so this exists for the agent CLIs.
-	Proxy ProxyConfig `json:"proxy"`
-}
-
-// ProxyConfig is the proxy the agent CLIs should use.
-//
-// It is applied as environment, not by interception: every agent CLI reaches
-// its own API over HTTP, and the standard proxy variables are how that is
-// routed — for a corporate egress, or to reach an API that is not served in the
-// host's region.
-type ProxyConfig struct {
-	// URL applies to every protocol. A scheme such as socks5:// is honoured by
-	// most CLIs.
-	URL string `json:"url"`
-	// HTTP and HTTPS override URL for a single protocol.
-	HTTP  string `json:"http"`
-	HTTPS string `json:"https"`
-	// NoProxy lists hosts that bypass the proxy, comma separated.
-	NoProxy string `json:"no_proxy"`
-}
-
-// validate checks the URLs in a proxy block. prefix names the block in the
-// error, so a bad per-agent value is not mistaken for a bad global one.
-func (p ProxyConfig) validate(prefix string) error {
-	for name, raw := range map[string]string{
-		"url": p.URL, "http": p.HTTP, "https": p.HTTPS,
-	} {
-		if raw == "" {
-			continue
-		}
-		parsed, err := url.Parse(raw)
-		if err != nil {
-			return fmt.Errorf("config: %s.%s is not a valid url: %w", prefix, name, err)
-		}
-		if parsed.Scheme == "" || parsed.Host == "" {
-			return fmt.Errorf("config: %s.%s must include a scheme and host, got %q", prefix, name, raw)
-		}
-	}
-	return nil
-}
-
-// Env renders the proxy as the environment an agent CLI expects.
-//
-// Both cases of each name are set: tools disagree about which they read, and
-// setting only one is a silent failure. The values may carry credentials, so
-// this is never logged verbatim.
-func (p ProxyConfig) Env() map[string]string {
-	env := map[string]string{}
-
-	all := p.URL
-	httpURL := firstNonEmpty(p.HTTP, p.URL)
-	httpsURL := firstNonEmpty(p.HTTPS, p.URL)
-
-	for _, pair := range []struct{ name, value string }{
-		{"HTTP_PROXY", httpURL}, {"http_proxy", httpURL},
-		{"HTTPS_PROXY", httpsURL}, {"https_proxy", httpsURL},
-		{"ALL_PROXY", all}, {"all_proxy", all},
-		{"NO_PROXY", p.NoProxy}, {"no_proxy", p.NoProxy},
-	} {
-		if pair.value != "" {
-			env[pair.name] = pair.value
-		}
-	}
-	return env
-}
-
-// Configured reports whether any proxy is set.
-func (p ProxyConfig) Configured() bool {
-	return p.URL != "" || p.HTTP != "" || p.HTTPS != ""
-}
-
-// Redacted renders the proxy for a log line, with any credentials removed.
-func (p ProxyConfig) Redacted() string {
-	if !p.Configured() {
-		return ""
-	}
-	return redactURL(firstNonEmpty(p.HTTPS, p.HTTP, p.URL))
-}
-
-// redactURL strips userinfo credentials from a URL.
-func redactURL(raw string) string {
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.User == nil {
-		return raw
-	}
-	parsed.User = url.User("***")
-	return parsed.String()
-}
-
-// firstNonEmpty returns the first non-empty string.
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-// mergeEnv layers environment maps, later ones winning.
-func mergeEnv(layers ...map[string]string) map[string]string {
-	total := 0
-	for _, layer := range layers {
-		total += len(layer)
-	}
-	if total == 0 {
-		return nil
-	}
-	out := make(map[string]string, total)
-	for _, layer := range layers {
-		for k, v := range layer {
-			out[k] = v
-		}
-	}
-	return out
+	Proxy ProxyConfig `json:"proxy" yaml:"proxy"`
 }
 
 // AgentConfig describes one agent CLI, overriding or extending the built-ins.
 type AgentConfig struct {
-	ID      string            `json:"id"`
-	Name    string            `json:"name"`
-	Command string            `json:"command"`
-	Args    []string          `json:"args"`
-	Env     map[string]string `json:"env"`
+	ID      string            `json:"id" yaml:"id"`
+	Name    string            `json:"name" yaml:"name"`
+	Command string            `json:"command" yaml:"command"`
+	Args    []string          `json:"args" yaml:"args"`
+	Env     map[string]string `json:"env" yaml:"env"`
 	// AuthMethod overrides which advertised ACP auth method is selected.
-	AuthMethod string `json:"auth_method"`
+	AuthMethod string `json:"auth_method" yaml:"auth_method"`
 	// APIKeyEnv names an environment variable holding an API key for a headless
 	// authenticate. Leave it empty for an agent already logged in on this host.
-	APIKeyEnv string `json:"api_key_env"`
+	APIKeyEnv string `json:"api_key_env" yaml:"api_key_env"`
 	// CredentialSource is "auto" (default), "env", "interactive" or "none".
 	// See agent.Agent.CredentialSource.
-	CredentialSource string `json:"credential_source"`
+	CredentialSource string `json:"credential_source" yaml:"credential_source"`
 	// Proxy overrides the global proxy for this agent only. Absent inherits the
 	// global one; present replaces it, and an empty url sends this agent direct.
-	Proxy *ProxyConfig `json:"proxy"`
+	Proxy *ProxyConfig `json:"proxy" yaml:"proxy"`
 }
 
 // Default returns the configuration used when nothing is specified.
@@ -206,6 +93,10 @@ func Default() Config {
 
 // Load returns the default configuration merged with the file at path (when
 // non-empty) and the environment. It does not validate.
+//
+// The file is YAML. YAML is a superset of JSON, so an existing JSON config keeps
+// working through the same parser, and comments — which JSON does not allow —
+// are available in new ones.
 func Load(path string) (Config, error) {
 	cfg := Default()
 
@@ -214,7 +105,11 @@ func Load(path string) (Config, error) {
 		if err != nil {
 			return Config{}, fmt.Errorf("config: read %s: %w", path, err)
 		}
-		if err := json.Unmarshal(data, &cfg); err != nil {
+		expanded, err := expandEnv(string(data))
+		if err != nil {
+			return Config{}, fmt.Errorf("config: %s: %w", path, err)
+		}
+		if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
 			return Config{}, fmt.Errorf("config: parse %s: %w", path, err)
 		}
 	}

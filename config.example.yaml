@@ -1,0 +1,70 @@
+# acp2api configuration.
+#
+# YAML, and JSON is accepted too: YAML is a superset, so an existing
+# config.json keeps working through the same parser.
+#
+# ${VAR} and ${VAR:-default} are substituted before parsing, so this file can be
+# a template for several environments. An unset variable with no default is an
+# error; write ${VAR:-} to say that empty is intended.
+#
+# Precedence: these defaults, then this file, then ACP2API_* variables, then
+# command-line flags.
+
+# Listen address. Binding off-loopback requires a token.
+addr: 127.0.0.1:8720
+
+# The agents' working directory. Empty means the process's directory.
+workspace: ""
+
+# Bearer token for /v1/*. Keep it out of this file:
+#   token: ${ACP2API_TOKEN}
+token: ""
+
+# How the gateway answers an agent's permission requests: allow or deny.
+# There is no "ask" — a headless gateway has nobody to ask.
+permission: allow
+
+# Bounds one ACP request.
+request_timeout_seconds: 600
+
+# Closes idle sessions and agent processes. Negative disables reaping.
+session_ttl_seconds: 1800
+
+# Serve only the agents listed below, so /v1/models matches what the host can
+# actually run. Without it the list can only add and override.
+disable_builtins: false
+
+# Routes the agents' outbound traffic. The gateway itself makes no outbound
+# requests; the agent CLIs call their own APIs, and a proxy is how those calls
+# are routed — for a corporate egress, or to reach an API that is not served in
+# the host's region.
+proxy:
+  url: ""
+  # no_proxy: localhost,127.0.0.1
+  # http: http://proxy:3128      # override url for one protocol
+  # https: http://proxy:3128
+
+agents:
+  - id: devin
+    name: Devin
+    command: devin
+    args: [acp]
+    # credential_source: auto | env | interactive | none
+    #
+    #   auto         APIKeyEnv, then the agent's own store (the default)
+    #   env          APIKeyEnv only; a missing value stops the process
+    #   interactive  never send a key; let the agent prompt, browser included
+    #   none         never authenticate
+    #
+    # Devin under ACP refuses its own login and its only advertised method
+    # opens a browser, so a daemon wants auto with a key:
+    # api_key_env: DEVIN_API_KEY
+
+  - id: opencode
+    name: OpenCode
+    command: opencode
+    args: [acp]
+    # An agent may carry its own proxy, which replaces the global one.
+    #   proxy: {}
+    #   proxy:
+    #     url: socks5://127.0.0.1:1080

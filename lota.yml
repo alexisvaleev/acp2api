@@ -35,7 +35,7 @@ serve:
   depends:
   - build
   args:
-  - config:str=config.json
+  - config:str=config.yaml
   script: "$OUT --config \"$config\""
 
 test:

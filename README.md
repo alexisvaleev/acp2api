@@ -231,8 +231,16 @@ estimated from text length.
 
 ## Configuration
 
-JSON, loaded from `--config`, then overridden by environment variables, then by
-flags. See `config.example.json`.
+YAML, loaded from `--config`, then overridden by environment variables, then by
+flags. See `config.example.yaml`. JSON is accepted too — YAML is a superset, so
+an existing `config.json` keeps working through the same parser.
+
+`${VAR}` and `${VAR:-default}` are substituted before parsing, so one file can
+serve as a template for several environments. An unset variable with no default
+is an error rather than an empty string: a typo in `${ACP2API_TOKEN}` would
+otherwise leave the gateway running without authentication. Write `${VAR:-}` to
+say that empty is intended. Lines that start with `#` are comments and are not
+expanded.
 
 | Key | Default | Notes |
 | --- | ------- | ----- |
