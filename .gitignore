@@ -15,6 +15,11 @@
 /.env
 /workspace/
 
+# Local-only working material: the staged plans and the conformance harness
+# are kept out of the repository.
+/.devin/plans/
+/test/
+
 # Container deployment: the compose file holds machine-local paths and
 # mounts; the image is built from the committed Dockerfile.
 /docker-compose.yml
