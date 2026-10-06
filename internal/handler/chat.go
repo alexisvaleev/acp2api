@@ -29,6 +29,18 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The parameter policy runs first: a request we cannot honour must fail
+	// before any agent process is spawned.
+	ignored, paramErr := openai.ValidateRequest(&req)
+	if paramErr != nil {
+		writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest,
+			openai.CodeUnsupportedParameter, paramErr.Error(), paramErr.Param)
+		return
+	}
+	if len(ignored) > 0 {
+		w.Header().Set("X-Acp2api-Ignored-Params", strings.Join(ignored, ","))
+	}
+
 	available := strings.Join(agentIDs(s.manager), ", ")
 	if strings.TrimSpace(req.Model) == "" {
 		writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest, "missing_model",
@@ -63,14 +75,14 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Stream {
-		s.streamTurn(w, r, req, turn, prompt)
+		s.streamTurn(w, r, req, turn, prompt, ignored)
 		return
 	}
-	s.blockingTurn(w, r, req, turn, prompt)
+	s.blockingTurn(w, r, req, turn, prompt, ignored)
 }
 
 // blockingTurn runs the turn and returns one complete completion.
-func (s *Server) blockingTurn(w http.ResponseWriter, r *http.Request, req openai.ChatCompletionRequest, turn session.Request, prompt string) {
+func (s *Server) blockingTurn(w http.ResponseWriter, r *http.Request, req openai.ChatCompletionRequest, turn session.Request, prompt string, ignored []string) {
 	var text strings.Builder
 	var steps openai.StepLog
 
@@ -97,12 +109,12 @@ func (s *Server) blockingTurn(w http.ResponseWriter, r *http.Request, req openai
 			FinishReason: openai.FinishReason(result.StopReason),
 		}},
 		Usage: estimateUsage(prompt, content),
-		ACP:   acpMeta(result, steps),
+		ACP:   acpMeta(result, steps, ignored),
 	})
 }
 
 // streamTurn runs the turn and emits the assistant text as server-sent events.
-func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, req openai.ChatCompletionRequest, turn session.Request, prompt string) {
+func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, req openai.ChatCompletionRequest, turn session.Request, prompt string, ignored []string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, openai.ErrTypeServer, "stream_unsupported",
@@ -158,7 +170,7 @@ func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, req openai.C
 	content := text.String()
 	finish := openai.FinishReason(result.StopReason)
 	final := newChunk(id, created, req.Model, openai.Delta{}, &finish)
-	final.ACP = acpMeta(result, steps)
+	final.ACP = acpMeta(result, steps, ignored)
 	send(final)
 
 	if req.StreamOptions != nil && req.StreamOptions.IncludeUsage {
@@ -199,13 +211,14 @@ func newChunk(id string, created int64, model string, delta openai.Delta, finish
 }
 
 // acpMeta assembles the ACP extension attached to a response.
-func acpMeta(result session.Result, steps openai.StepLog) *openai.ACPMeta {
+func acpMeta(result session.Result, steps openai.StepLog, ignored []string) *openai.ACPMeta {
 	return &openai.ACPMeta{
 		Agent:          result.Agent,
 		SessionID:      result.SessionID,
 		ConversationID: result.ConversationID,
 		StopReason:     result.StopReason,
 		Steps:          steps.Steps(),
+		IgnoredParams:  ignored,
 	}
 }
 

@@ -47,6 +47,43 @@ type ChatCompletionRequest struct {
 	// Workspace is this gateway's extension: the agent's working directory.
 	// Empty means the server's configured default.
 	Workspace string `json:"workspace,omitempty"`
+
+	// The fields below are modelled explicitly so the parameter policy can tell
+	// "absent" from "zero". A plain float64 cannot distinguish a temperature of
+	// 0 from an omitted temperature, and the policy has to report exactly what
+	// the caller sent.
+
+	// Tools and ToolChoice are the modern function-calling surface.
+	Tools      []Tool          `json:"tools,omitempty"`
+	ToolChoice json.RawMessage `json:"tool_choice,omitempty"`
+
+	// Functions and FunctionCall are the deprecated predecessors of the above.
+	Functions    []json.RawMessage `json:"functions,omitempty"`
+	FunctionCall json.RawMessage   `json:"function_call,omitempty"`
+
+	// ResponseFormat requests JSON or schema-constrained output.
+	ResponseFormat json.RawMessage `json:"response_format,omitempty"`
+	// Stop is a string or an array of strings.
+	Stop json.RawMessage `json:"stop,omitempty"`
+
+	// MaxTokens and MaxCompletionTokens cap the output length.
+	MaxTokens           *int `json:"max_tokens,omitempty"`
+	MaxCompletionTokens *int `json:"max_completion_tokens,omitempty"`
+	// N requests more than one choice.
+	N *int `json:"n,omitempty"`
+
+	// Logprobs and TopLogprobs request token probabilities.
+	Logprobs    *bool `json:"logprobs,omitempty"`
+	TopLogprobs *int  `json:"top_logprobs,omitempty"`
+
+	// Sampling parameters. The agent owns its own sampling, so these are
+	// accepted and reported rather than honoured.
+	Temperature      *float64       `json:"temperature,omitempty"`
+	TopP             *float64       `json:"top_p,omitempty"`
+	Seed             *int           `json:"seed,omitempty"`
+	PresencePenalty  *float64       `json:"presence_penalty,omitempty"`
+	FrequencyPenalty *float64       `json:"frequency_penalty,omitempty"`
+	LogitBias        map[string]int `json:"logit_bias,omitempty"`
 }
 
 // StreamOptions mirrors the OpenAI field.
@@ -160,6 +197,10 @@ type ACPMeta struct {
 	ConversationID string `json:"conversation_id,omitempty"`
 	StopReason     string `json:"stop_reason,omitempty"`
 	Steps          []Step `json:"steps,omitempty"`
+	// IgnoredParams names the request parameters the gateway accepted but did
+	// not honour. It is also echoed in the X-Acp2api-Ignored-Params header, so
+	// a caller can always tell what was dropped.
+	IgnoredParams []string `json:"ignored_params,omitempty"`
 }
 
 // Step is one activity the agent performed during the turn: reasoning, a tool

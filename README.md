@@ -68,6 +68,33 @@ An ACP session is stateful, which the OpenAI request shape does not express.
 `user` is accepted as a fallback conversation key for clients that cannot set a
 custom field.
 
+## Parameter policy
+
+No parameter is silently ignored. Every OpenAI parameter is either honoured,
+explicitly rejected, or accepted and reported back to you.
+
+| Disposition | Parameters | Behaviour |
+| ----------- | ---------- | --------- |
+| Supported | `model`, `messages`, `stream`, `stream_options`, `conversation_id`, `user`, `workspace` | Honoured. |
+| Accepted and reported | `temperature`, `top_p`, `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias` | The agent owns its own sampling, so these cannot be honoured — and you cannot detect that as an error. They are listed in `acp.ignored_params` and in the `X-Acp2api-Ignored-Params` header. |
+| Rejected | `tools`, `tool_choice`, `functions`, `function_call`, `response_format`, `stop`, `max_tokens`, `max_completion_tokens`, `logprobs`, `top_logprobs`, `n > 1` | `400` with code `unsupported_parameter`, naming the offending field. Ignoring these would make the response violate your request. |
+
+Rejections carry the reason and the stage that will implement the parameter:
+
+```json
+{
+  "error": {
+    "message": "parameter \"tools\" is not supported: caller-defined tools are not yet translated to ACP; they arrive in stage 2",
+    "type": "invalid_request_error",
+    "code": "unsupported_parameter",
+    "param": "tools"
+  }
+}
+```
+
+The policy table lives in `internal/openai/params.go` and is the single source
+of truth.
+
 ## The `acp` extension
 
 An agent session, its permission decisions, and its tool activity have no OpenAI

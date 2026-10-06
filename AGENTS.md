@@ -32,7 +32,7 @@ OpenAI client ──HTTP/SSE──▶ gateway ──JSON-RPC over stdio──▶
 - `internal/agent/` — agent registry (command, args, env, capabilities).
 - `internal/client/` — client-side ACP handlers: fs, terminal, permission.
 - `internal/session/` — conversation ↔ ACP session, process lifecycle.
-- `internal/openai/` — OpenAI types and the ACP→OpenAI mapping.
+- `internal/openai/` — OpenAI types, the parameter policy, and the ACP→OpenAI mapping.
 - `internal/handler/` — thin HTTP handlers and middleware.
 - `internal/config/` — config loading.
 - `reference/` — gitignored upstream checkouts used for design reference.
@@ -52,6 +52,11 @@ go test ./internal/openai/ -v
 
 ## Non-negotiables
 
+- **No parameter is silently ignored.** Every OpenAI parameter is honoured,
+  rejected with `unsupported_parameter`, or accepted and reported in
+  `acp.ignored_params`. `internal/openai/params.go` is the single source of
+  truth; a field added to a request struct without a rule is a bug, and a test
+  asserts it cannot happen.
 - **TDD.** New behavior and bug fixes start with a failing test. The full suite
   is green before work is reported.
 - **No real agents in tests.** Use the fake stdio agent fixture. No network, no

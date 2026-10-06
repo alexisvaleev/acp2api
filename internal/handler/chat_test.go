@@ -269,6 +269,85 @@ func TestHealthNeedsNoToken(t *testing.T) {
 	}
 }
 
+func TestUnsupportedParameterIsRejectedBeforeAnyWork(t *testing.T) {
+	srv := newTestServer(t, nil, "")
+
+	resp := post(t, srv, "", map[string]any{
+		"model":    "fake",
+		"messages": []map[string]string{{"role": "user", "content": "hi"}},
+		"tools":    []map[string]any{{"type": "function", "function": map[string]string{"name": "f"}}},
+	})
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	var failure openai.ErrorResponse
+	if err := json.NewDecoder(resp.Body).Decode(&failure); err != nil {
+		t.Fatal(err)
+	}
+	if failure.Error.Code != openai.CodeUnsupportedParameter {
+		t.Fatalf("error code = %q, want %q", failure.Error.Code, openai.CodeUnsupportedParameter)
+	}
+	if failure.Error.Param != "tools" {
+		t.Fatalf("error param = %q, want tools", failure.Error.Param)
+	}
+}
+
+func TestIgnoredParametersAreReportedInHeaderAndBody(t *testing.T) {
+	srv := newTestServer(t, nil, "")
+
+	resp := post(t, srv, "", map[string]any{
+		"model":       "fake",
+		"messages":    []map[string]string{{"role": "user", "content": "hi"}},
+		"temperature": 0.2,
+		"top_p":       0.9,
+	})
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	header := resp.Header.Get("X-Acp2api-Ignored-Params")
+	if header != "temperature,top_p" {
+		t.Fatalf("header = %q, want temperature,top_p", header)
+	}
+
+	var completion openai.ChatCompletionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&completion); err != nil {
+		t.Fatal(err)
+	}
+	if completion.ACP == nil {
+		t.Fatal("expected the acp extension")
+	}
+	got := strings.Join(completion.ACP.IgnoredParams, ",")
+	if got != header {
+		t.Fatalf("body reports %q but the header says %q; they must agree", got, header)
+	}
+}
+
+func TestNoIgnoredHeaderWhenNothingWasIgnored(t *testing.T) {
+	srv := newTestServer(t, nil, "")
+
+	resp := post(t, srv, "", map[string]any{
+		"model":    "fake",
+		"messages": []map[string]string{{"role": "user", "content": "hi"}},
+	})
+	defer resp.Body.Close()
+
+	if got := resp.Header.Get("X-Acp2api-Ignored-Params"); got != "" {
+		t.Fatalf("header = %q, want it absent", got)
+	}
+	var completion openai.ChatCompletionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&completion); err != nil {
+		t.Fatal(err)
+	}
+	if completion.ACP != nil && len(completion.ACP.IgnoredParams) != 0 {
+		t.Fatalf("ignored params = %v, want none", completion.ACP.IgnoredParams)
+	}
+}
+
 // readSSE collects the payloads of a server-sent event stream.
 func readSSE(t *testing.T, body io.Reader) []string {
 	t.Helper()
