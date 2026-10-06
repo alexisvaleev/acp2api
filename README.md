@@ -252,6 +252,27 @@ expanded.
 | `session_ttl_seconds` | `1800` | Idle sessions and agent processes are reaped. Negative disables. |
 | `agents` | built-ins | Overrides by id, or new agents. |
 | `disable_builtins` | `false` | `true` serves only the agents listed above, so `/v1/models` matches what the host can run. |
+| `read_only` | `false` | Refuses filesystem writes, and withholds the write capability at `initialize`. |
+| `mode` | agent default | Session mode selected after opening a session, e.g. `plan` or `ask`. Checked against what the agent advertises. |
+| `proxy` | none | Routes the agents' outbound traffic; `url`, optional `http`/`https`/`no_proxy`. |
+
+Every agent entry may override `workspace`, `read_only`, `mode` and `proxy`, and
+may add its own `env`. A per-agent proxy or workspace replaces the global one
+rather than merging with it.
+
+### Read-only, and what a workspace is for
+
+An ACP agent is not a model. It is a process with tools, and it uses them: ask
+it about the weather and it may still look around the directory it was started
+in. So for provider-style use, point `workspace` at a scratch directory, and set
+`read_only: true` — that refuses `fs/write_text_file` outright and drops the
+capability from the handshake, so the agent cannot write whether it wants to or
+not. `permission: deny` does **not** cover this: permission requests and
+filesystem callbacks are separate paths.
+
+`mode` is the second lever, and it works on the agent's side: `plan` and `ask`
+are read-only on most agents. Unlike `read_only`, it depends on the agent
+cooperating, which is why both exist.
 
 Environment: `ACP2API_ADDR`, `ACP2API_TOKEN`, `ACP2API_WORKSPACE`,
 `ACP2API_PERMISSION`.

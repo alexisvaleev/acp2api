@@ -43,8 +43,22 @@ type Agent struct {
 	//   interactive never send a key; let the agent prompt, browser included
 	//   none        never authenticate
 	CredentialSource string
+	// ReadOnly refuses filesystem writes, so the agent can read and reason but
+	// change nothing. It also drops the write capability from initialize:
+	// advertising a capability we then refuse would be a lie, and the agent
+	// would spend a turn discovering it.
+	ReadOnly bool
+	// Mode is the session mode to select after opening a session, such as
+	// "plan" or "ask". Empty leaves whatever the agent defaults to.
+	Mode string
+	// Workspace is the directory this agent works in. Empty falls back to the
+	// manager's default. A request may still override it per call.
+	//
+	// It is also half of the connection key, so two agents with different
+	// workspaces get separate processes rather than sharing one.
+	Workspace string
 	// ClientCapabilities overrides the default initialize capabilities.
-	// Nil means DefaultCapabilities().
+	// Nil means DefaultCapabilities() or ReadOnlyCapabilities().
 	ClientCapabilities map[string]any
 }
 
@@ -84,6 +98,9 @@ func (a Agent) Capabilities() map[string]any {
 	if a.ClientCapabilities != nil {
 		return a.ClientCapabilities
 	}
+	if a.ReadOnly {
+		return ReadOnlyCapabilities()
+	}
 	return DefaultCapabilities()
 }
 
@@ -99,6 +116,20 @@ func DefaultCapabilities() map[string]any {
 		"fs": map[string]any{
 			"readTextFile":  true,
 			"writeTextFile": true,
+		},
+	}
+}
+
+// ReadOnlyCapabilities advertises reading only.
+//
+// This is the switch that makes a coding agent behave like a model provider:
+// the point of read-only use is to ask questions, and an agent that believes it
+// can edit files will try.
+func ReadOnlyCapabilities() map[string]any {
+	return map[string]any{
+		"fs": map[string]any{
+			"readTextFile":  true,
+			"writeTextFile": false,
 		},
 	}
 }

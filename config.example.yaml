@@ -30,6 +30,19 @@ request_timeout_seconds: 600
 # Closes idle sessions and agent processes. Negative disables reaping.
 session_ttl_seconds: 1800
 
+# Refuse filesystem writes for every agent, so they can read and reason but
+# change nothing. This is the switch that makes a coding agent behave like a
+# model provider: an agent that believes it can edit files will try. The write
+# capability is withheld at initialize as well, so a well-behaved agent never
+# even asks.
+read_only: false
+
+# The session mode selected after opening a session. "plan" and "ask" are
+# read-only on most agents. The value is checked against what each agent
+# advertises — an agent that does not offer it fails with the list of ones it
+# does, rather than quietly running in its own default.
+mode: ""
+
 # Serve only the agents listed below, so /v1/models matches what the host can
 # actually run. Without it the list can only add and override.
 disable_builtins: false
@@ -64,7 +77,19 @@ agents:
     name: OpenCode
     command: opencode
     args: [acp]
-    # An agent may carry its own proxy, which replaces the global one.
+    # Anything global can be overridden per agent. The shape is the same:
+    #
+    #   workspace: /srv/other-repo     # this agent works elsewhere
+    #   read_only: true                # and may not write
+    #   mode: plan
+    #
+    # An agent may also carry its own proxy, which replaces the global one:
+    #
     #   proxy: {}
     #   proxy:
     #     url: socks5://127.0.0.1:1080
+    #
+    # And its own environment, which wins over the proxy's:
+    #
+    #   env:
+    #     HTTPS_PROXY: ""

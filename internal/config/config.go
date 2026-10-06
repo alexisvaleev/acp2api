@@ -59,6 +59,14 @@ type Config struct {
 	// Proxy routes the agents' outbound traffic. The gateway itself makes no
 	// outbound requests, so this exists for the agent CLIs.
 	Proxy ProxyConfig `json:"proxy" yaml:"proxy"`
+	// ReadOnly refuses filesystem writes for every agent, so they can read and
+	// reason but change nothing. This is the switch that makes a coding agent
+	// behave like a model provider.
+	ReadOnly bool `json:"read_only" yaml:"read_only"`
+	// Mode is the session mode selected after opening a session, for every
+	// agent. "plan" and "ask" are read-only on most agents. The value is
+	// checked against what each agent advertises.
+	Mode string `json:"mode" yaml:"mode"`
 }
 
 // AgentConfig describes one agent CLI, overriding or extending the built-ins.
@@ -79,6 +87,15 @@ type AgentConfig struct {
 	// Proxy overrides the global proxy for this agent only. Absent inherits the
 	// global one; present replaces it, and an empty url sends this agent direct.
 	Proxy *ProxyConfig `json:"proxy" yaml:"proxy"`
+	// ReadOnly overrides the global setting for this agent. Absent inherits it;
+	// present sets it either way, which is why it is a pointer — a proxied
+	// deployment may still need one agent that can write.
+	ReadOnly *bool `json:"read_only" yaml:"read_only"`
+	// Mode overrides the global mode for this agent. Empty inherits it.
+	Mode string `json:"mode" yaml:"mode"`
+	// Workspace overrides the global working directory for this agent. Empty
+	// inherits it. A request may still override it per call.
+	Workspace string `json:"workspace" yaml:"workspace"`
 }
 
 // Default returns the configuration used when nothing is specified.
@@ -150,10 +167,22 @@ func (c *Config) normalise() {
 		c.SessionTTLSeconds = int(DefaultSessionTTL / time.Second)
 	}
 	if c.Workspace != "" {
-		if abs, err := filepath.Abs(c.Workspace); err == nil {
-			c.Workspace = abs
+		c.Workspace = absolute(c.Workspace)
+	}
+	for i := range c.Agents {
+		if c.Agents[i].Workspace != "" {
+			c.Agents[i].Workspace = absolute(c.Agents[i].Workspace)
 		}
 	}
+}
+
+// absolute resolves a path against the process working directory, leaving it
+// alone when it cannot be resolved.
+func absolute(path string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return path
 }
 
 // RequestTimeout returns the per-request ACP timeout.
@@ -246,10 +275,13 @@ func (c Config) Registry() (*agent.Registry, error) {
 	if !c.DisableBuiltins {
 		agents = agent.Builtins()
 	}
-	// The proxy is global, so it reaches built-ins too — not only the agents a
-	// configuration happens to name.
+	// The proxy, read-only and mode are global, so they reach built-ins too —
+	// not only the agents a configuration happens to name.
 	for i := range agents {
 		agents[i].Env = mergeEnv(proxyEnv, agents[i].Env)
+		agents[i].ReadOnly = c.ReadOnly
+		agents[i].Mode = c.Mode
+		agents[i].Workspace = c.Workspace
 	}
 
 	// Then apply the configured agents: an entry overrides a built-in by id, or
@@ -267,6 +299,19 @@ func (c Config) Registry() (*agent.Registry, error) {
 			proxy = *configured.Proxy
 		}
 
+		readOnly := c.ReadOnly
+		if configured.ReadOnly != nil {
+			readOnly = *configured.ReadOnly
+		}
+		mode := configured.Mode
+		if mode == "" {
+			mode = c.Mode
+		}
+		workspace := configured.Workspace
+		if workspace == "" {
+			workspace = c.Workspace
+		}
+
 		entry := agent.Agent{
 			ID:               configured.ID,
 			Name:             configured.Name,
@@ -276,6 +321,9 @@ func (c Config) Registry() (*agent.Registry, error) {
 			AuthMethod:       configured.AuthMethod,
 			APIKeyEnv:        configured.APIKeyEnv,
 			CredentialSource: configured.CredentialSource,
+			ReadOnly:         readOnly,
+			Mode:             mode,
+			Workspace:        workspace,
 		}
 		if i, ok := index[configured.ID]; ok {
 			// An override keeps the built-in display name unless it sets one.

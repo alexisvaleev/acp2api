@@ -149,7 +149,13 @@ func (m *Manager) Prompt(ctx context.Context, req Request, onUpdate func(acp.Ses
 	if err != nil {
 		return Result{}, err
 	}
+	// A per-call workspace wins, then the agent's own, then the manager's
+	// default. The workspace is half of the connection key, so a request that
+	// names a different one gets its own agent process.
 	workspace := req.Workspace
+	if workspace == "" {
+		workspace = a.Workspace
+	}
 	if workspace == "" {
 		workspace = m.opts.Workspace
 	}

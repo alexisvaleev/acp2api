@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -309,12 +310,17 @@ func (c *connection) newSession(ctx context.Context, model string) (*state, erro
 		Workspace: c.workspace,
 		Policy:    c.manager.opts.Policy,
 		OnWrite:   c.manager.opts.OnWrite,
+		ReadOnly:  c.agent.ReadOnly,
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	st := &state{id: res.SessionID, client: c.client, handler: handler, lastUsed: time.Now()}
+
+	if err := c.applyMode(ctx, res); err != nil {
+		return nil, err
+	}
 
 	// Selecting a model is best-effort: an agent that advertises no model
 	// config option still works, it just runs its own default.
@@ -328,6 +334,44 @@ func (c *connection) newSession(ctx context.Context, model string) (*state, erro
 		}
 	}
 	return st, nil
+}
+
+// applyMode selects the agent's session mode when one is configured.
+//
+// The requested mode is checked against what the agent advertised. Selecting an
+// unknown one would otherwise be accepted or quietly ignored, and the operator
+// would believe the agent is read-only while it is not — the exact failure this
+// gateway refuses to have.
+func (c *connection) applyMode(ctx context.Context, session acp.NewSessionResponse) error {
+	mode := c.agent.Mode
+	if mode == "" {
+		return nil
+	}
+
+	if session.Modes == nil || len(session.Modes.AvailableModes) == 0 {
+		return fmt.Errorf(
+			"session: agent %q advertises no session modes, so mode %q cannot be selected",
+			c.agent.ID, mode)
+	}
+
+	available := make([]string, 0, len(session.Modes.AvailableModes))
+	for _, candidate := range session.Modes.AvailableModes {
+		if candidate.ID != mode {
+			available = append(available, candidate.ID)
+			continue
+		}
+		if _, err := c.client.Request(ctx, acp.MethodSessionSetMode, acp.SetModeRequest{
+			SessionID: session.SessionID,
+			ModeID:    mode,
+		}); err != nil {
+			return fmt.Errorf("session: select mode %q on agent %q: %w", mode, c.agent.ID, err)
+		}
+		slog.Info("session: mode selected", "agent", c.agent.ID, "mode", mode)
+		return nil
+	}
+
+	return fmt.Errorf("session: agent %q does not offer mode %q; available: %s",
+		c.agent.ID, mode, strings.Join(available, ", "))
 }
 
 // drop removes a session from both indexes.

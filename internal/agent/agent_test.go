@@ -67,6 +67,31 @@ func TestRegisterOverridesWithoutDuplicating(t *testing.T) {
 	}
 }
 
+func TestReadOnlyAgentWithholdsTheWriteCapability(t *testing.T) {
+	caps := (Agent{ID: "x", ReadOnly: true}).Capabilities()
+	fs, ok := caps["fs"].(map[string]any)
+	if !ok {
+		t.Fatalf("capabilities.fs missing: %#v", caps)
+	}
+	if fs["readTextFile"] != true {
+		t.Fatalf("read should stay: %#v", fs)
+	}
+	// Advertising a capability we then refuse would be a lie, and the agent
+	// would spend a turn discovering it.
+	if fs["writeTextFile"] != false {
+		t.Fatalf("write must be withheld, got %#v", fs)
+	}
+}
+
+func TestExplicitCapabilitiesWinOverReadOnly(t *testing.T) {
+	// An operator who sets capabilities explicitly meant it.
+	explicit := map[string]any{"fs": map[string]any{"readTextFile": true, "writeTextFile": true}}
+	caps := (Agent{ID: "x", ReadOnly: true, ClientCapabilities: explicit}).Capabilities()
+	if caps["fs"].(map[string]any)["writeTextFile"] != true {
+		t.Fatalf("explicit capabilities were overridden: %#v", caps)
+	}
+}
+
 func TestCapabilitiesDefaultAdvertisesFsOnly(t *testing.T) {
 	caps := (Agent{ID: "x"}).Capabilities()
 	fs, ok := caps["fs"].(map[string]any)

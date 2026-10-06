@@ -37,6 +37,13 @@ import (
 	"sync"
 )
 
+// fakeModes is the session mode list every fake session advertises.
+var fakeModes = []map[string]any{
+	{"id": "build", "name": "Build"},
+	{"id": "plan", "name": "Plan"},
+	{"id": "ask", "name": "Ask"},
+}
+
 // EnvVar is the marker environment variable that turns a process into the
 // fake agent.
 const EnvVar = "ACP2API_FAKE_AGENT"
@@ -90,6 +97,14 @@ type agent struct {
 	turns         int
 	authenticated bool
 	authMetaKeys  int
+	mode          string
+}
+
+// Mode reports the session mode the gateway last selected.
+func (a *agent) Mode() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.mode
 }
 
 // AuthMetaKeys reports how many `_meta` entries the last authenticate carried,
@@ -221,7 +236,7 @@ func (a *agent) handleRequest(msg message) {
 			"sessionId": fmt.Sprintf("fake-session-%d", n),
 			"modes": map[string]any{
 				"currentModeId":  "build",
-				"availableModes": []any{map[string]any{"id": "build", "name": "Build"}, map[string]any{"id": "plan", "name": "Plan"}},
+				"availableModes": fakeModes,
 			},
 			"configOptions": []any{map[string]any{
 				"id":           "model",
@@ -233,6 +248,29 @@ func (a *agent) handleRequest(msg message) {
 				},
 			}},
 		})
+	case "session/set_mode":
+		var p struct {
+			SessionID string `json:"sessionId"`
+			ModeID    string `json:"modeId"`
+		}
+		_ = json.Unmarshal(msg.Params, &p)
+		known := false
+		for _, mode := range fakeModes {
+			if mode["id"] == p.ModeID {
+				known = true
+				break
+			}
+		}
+		if !known {
+			a.write(map[string]any{"jsonrpc": "2.0", "id": rawID(msg.ID), "error": map[string]any{
+				"code": -32602, "message": "unknown mode " + p.ModeID,
+			}})
+			return
+		}
+		a.mu.Lock()
+		a.mode = p.ModeID
+		a.mu.Unlock()
+		a.write(map[string]any{"jsonrpc": "2.0", "id": rawID(msg.ID), "result": nil})
 	case "session/prompt":
 		a.turn(msg)
 	default:

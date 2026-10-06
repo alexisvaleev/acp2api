@@ -24,6 +24,13 @@ type Options struct {
 	// OnWrite, if set, is notified after a file is written, with the previous
 	// and new content. Used for change tracking.
 	OnWrite func(path, oldContent, newContent string)
+	// ReadOnly refuses fs/write_text_file.
+	//
+	// The write capability is also withheld at initialize, so a well-behaved
+	// agent never asks. This is the second line of defence for the ones that ask
+	// anyway — and it is the line that actually holds, because it does not
+	// depend on the agent's cooperation.
+	ReadOnly bool
 }
 
 // Handler answers agent→client requests for one session.
@@ -31,6 +38,7 @@ type Handler struct {
 	workspace string
 	policy    Policy
 	onWrite   func(path, oldContent, newContent string)
+	readOnly  bool
 }
 
 // New resolves the workspace and returns a handler.
@@ -39,7 +47,12 @@ func New(opts Options) (*Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Handler{workspace: workspace, policy: opts.Policy, onWrite: opts.OnWrite}, nil
+	return &Handler{
+		workspace: workspace,
+		policy:    opts.Policy,
+		onWrite:   opts.OnWrite,
+		readOnly:  opts.ReadOnly,
+	}, nil
 }
 
 // Workspace returns the resolved workspace root.
@@ -51,6 +64,14 @@ func (h *Handler) Handle(ctx context.Context, method string, params json.RawMess
 	case acp.MethodReadTextFile:
 		return h.readFile(params)
 	case acp.MethodWriteTextFile:
+		if h.readOnly {
+			// The same code the terminal gets: "this client does not do that",
+			// which is true, and which an agent handles by adapting.
+			return nil, &acp.Error{
+				Code:    acp.CodeMethodNotFound,
+				Message: "this client is read-only: fs/write_text_file is refused",
+			}
+		}
 		return h.writeFile(params)
 	case acp.MethodRequestPerm:
 		return h.permission(ctx, params)

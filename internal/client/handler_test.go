@@ -158,6 +158,52 @@ func TestHandleTerminalIsRefused(t *testing.T) {
 	}
 }
 
+func TestReadOnlyHandlerRefusesWrites(t *testing.T) {
+	root := t.TempDir()
+	h, err := New(Options{Workspace: root, Policy: AllowAll(), ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = h.Handle(context.Background(), acp.MethodWriteTextFile, mustJSON(t, acp.WriteTextFileRequest{
+		SessionID: "s1",
+		Path:      "nope.txt",
+		Content:   "nope",
+	}))
+	if err == nil {
+		t.Fatal("a read-only handler must refuse a write")
+	}
+	var rpcErr *acp.Error
+	if !errors.As(err, &rpcErr) || rpcErr.Code != acp.CodeMethodNotFound {
+		t.Fatalf("error = %v, want method not found", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "nope.txt")); statErr == nil {
+		t.Fatal("the file was written anyway")
+	}
+}
+
+// TestReadOnlyHandlerStillReads is the control: read-only must not disable reads.
+func TestReadOnlyHandlerStillReads(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("readable"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h, err := New(Options{Workspace: root, Policy: AllowAll(), ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := h.Handle(context.Background(), acp.MethodReadTextFile, mustJSON(t, acp.ReadTextFileRequest{
+		SessionID: "s1", Path: "a.txt",
+	}))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if result.(acp.ReadTextFileResponse).Content != "readable" {
+		t.Fatalf("content = %q", result.(acp.ReadTextFileResponse).Content)
+	}
+}
+
 func TestParsePolicy(t *testing.T) {
 	if _, err := ParsePolicy("allow"); err != nil {
 		t.Fatal(err)

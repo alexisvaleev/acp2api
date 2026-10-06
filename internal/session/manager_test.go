@@ -179,6 +179,82 @@ func TestOnWriteIsReported(t *testing.T) {
 	}
 }
 
+// TestAgentWorkspaceIsUsed covers the layering: an agent that names its own
+// directory works there, not in the manager's default.
+func TestAgentWorkspaceIsUsed(t *testing.T) {
+	managerWorkspace := t.TempDir()
+	agentWorkspace := t.TempDir()
+
+	registry := agent.NewRegistry(agent.Agent{
+		ID:        "fake",
+		Name:      "Fake",
+		Command:   os.Args[0],
+		Workspace: agentWorkspace,
+	})
+	m, err := session.New(registry, session.Options{
+		Workspace:      managerWorkspace,
+		Policy:         client.AllowAll(),
+		RequestTimeout: 15 * time.Second,
+		Env: map[string]string{
+			"ACP2API_FAKE_AGENT":       "1",
+			"FAKE_AGENT_WRITE_PATH":    "where.txt",
+			"FAKE_AGENT_WRITE_CONTENT": "here",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = m.Close() })
+
+	if _, err := m.Prompt(context.Background(), session.Request{Model: "fake", Prompt: "write"}, noop); err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(agentWorkspace, "where.txt")); err != nil {
+		t.Fatalf("the agent should have written in its own workspace: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(managerWorkspace, "where.txt")); err == nil {
+		t.Fatal("the file landed in the manager's workspace instead")
+	}
+}
+
+// TestRequestWorkspaceBeatsTheAgents covers the last layer: a per-call override.
+func TestRequestWorkspaceBeatsTheAgents(t *testing.T) {
+	agentWorkspace := t.TempDir()
+	requestWorkspace := t.TempDir()
+
+	registry := agent.NewRegistry(agent.Agent{
+		ID: "fake", Name: "Fake", Command: os.Args[0], Workspace: agentWorkspace,
+	})
+	m, err := session.New(registry, session.Options{
+		Workspace:      t.TempDir(),
+		Policy:         client.AllowAll(),
+		RequestTimeout: 15 * time.Second,
+		Env: map[string]string{
+			"ACP2API_FAKE_AGENT":       "1",
+			"FAKE_AGENT_WRITE_PATH":    "where.txt",
+			"FAKE_AGENT_WRITE_CONTENT": "here",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = m.Close() })
+
+	if _, err := m.Prompt(context.Background(), session.Request{
+		Model: "fake", Workspace: requestWorkspace, Prompt: "write",
+	}, noop); err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(requestWorkspace, "where.txt")); err != nil {
+		t.Fatalf("the per-call workspace should win: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(agentWorkspace, "where.txt")); err == nil {
+		t.Fatal("the file landed in the agent's workspace instead")
+	}
+}
+
 func TestMissingAgentBinaryIsReported(t *testing.T) {
 	registry := agent.NewRegistry(agent.Agent{ID: "missing", Command: "/nonexistent/agent-binary"})
 	m, _ := newManager(t, registry, nil)
