@@ -51,6 +51,10 @@ type Config struct {
 	SessionTTLSeconds int `json:"session_ttl_seconds"`
 	// Agents overrides built-in agents by id and adds new ones.
 	Agents []AgentConfig `json:"agents"`
+	// DisableBuiltins removes the built-in agents, so only those listed in
+	// Agents are served. Without it the Agents list can only add and override,
+	// which makes /v1/models advertise agents the host cannot run.
+	DisableBuiltins bool `json:"disable_builtins"`
 }
 
 // AgentConfig describes one agent CLI, overriding or extending the built-ins.
@@ -172,9 +176,16 @@ func (c Config) Validate() error {
 }
 
 // Registry builds the agent registry: built-ins first, then configuration
-// overrides, so a config entry can retarget a built-in command.
+// overrides, so a config entry can retarget a built-in command. With
+// DisableBuiltins only the configured agents exist.
 func (c Config) Registry() (*agent.Registry, error) {
-	r := agent.BuiltinRegistry()
+	var r *agent.Registry
+	if c.DisableBuiltins {
+		r = agent.NewRegistry()
+	} else {
+		r = agent.BuiltinRegistry()
+	}
+
 	for _, a := range c.Agents {
 		name := a.Name
 		if name == "" {

@@ -15,6 +15,10 @@
 /.env
 /workspace/
 
+# Local deployment files: production config, systemd unit, env template.
+# These describe one machine and are not shared through the repository.
+/prod/
+
 # Editor / OS
 .vscode-dev/
 .idea/

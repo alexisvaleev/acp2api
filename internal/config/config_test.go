@@ -111,6 +111,52 @@ func TestRegistryOverridesBuiltinAndAddsCustom(t *testing.T) {
 	}
 }
 
+func TestDisableBuiltinsServesOnlyConfiguredAgents(t *testing.T) {
+	cfg := config.Default()
+	cfg.DisableBuiltins = true
+	cfg.Agents = []config.AgentConfig{
+		{ID: "devin", Command: "devin", Args: []string{"acp"}},
+		{ID: "opencode", Command: "opencode", Args: []string{"acp"}},
+	}
+
+	registry, err := cfg.Registry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(registry.List()); got != 2 {
+		t.Fatalf("listed %d agents, want 2", got)
+	}
+	for _, id := range []string{"cursor", "claude", "codex", "kiro"} {
+		if _, ok := registry.Get(id); ok {
+			t.Fatalf("built-in %q survived DisableBuiltins", id)
+		}
+	}
+}
+
+func TestDisableBuiltinsWithNoAgentsIsAnError(t *testing.T) {
+	cfg := config.Default()
+	cfg.DisableBuiltins = true
+	if _, err := cfg.Registry(); err == nil {
+		t.Fatal("expected an empty agent list to be an error")
+	}
+}
+
+func TestBuiltinsRemainByDefault(t *testing.T) {
+	cfg := config.Default()
+	cfg.Agents = []config.AgentConfig{{ID: "custom", Command: "/bin/echo"}}
+
+	registry, err := cfg.Registry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := registry.Get("opencode"); !ok {
+		t.Fatal("a built-in must survive an unrelated addition")
+	}
+	if _, ok := registry.Get("custom"); !ok {
+		t.Fatal("the configured agent is missing")
+	}
+}
+
 func TestDurationAccessors(t *testing.T) {
 	cfg := config.Default()
 	if got := cfg.RequestTimeout(); got != config.DefaultRequestTimeout {

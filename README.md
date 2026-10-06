@@ -243,6 +243,7 @@ flags. See `config.example.json`.
 | `request_timeout_seconds` | `120` | Bounds one ACP request. |
 | `session_ttl_seconds` | `1800` | Idle sessions and agent processes are reaped. Negative disables. |
 | `agents` | built-ins | Overrides by id, or new agents. |
+| `disable_builtins` | `false` | `true` serves only the agents listed above, so `/v1/models` matches what the host can run. |
 
 Environment: `ACP2API_ADDR`, `ACP2API_TOKEN`, `ACP2API_WORKSPACE`,
 `ACP2API_PERMISSION`.
