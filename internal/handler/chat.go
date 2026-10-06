@@ -68,6 +68,12 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate the output controls before any agent work starts.
+	if _, err := openai.NewTextLimit(req.Stop, req.EffectiveMaxTokens()); err != nil {
+		writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest, "invalid_stop", err.Error(), "stop")
+		return
+	}
+
 	prompt, err := openai.BuildTurn(req.Messages, conversationID != "", req.Tools, choice)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest, "invalid_messages", err.Error(), "messages")
@@ -109,19 +115,30 @@ type turnPlan struct {
 
 // blockingTurn runs the turn and returns one complete completion.
 func (s *Server) blockingTurn(w http.ResponseWriter, r *http.Request, plan turnPlan) {
+	limit, err := openai.NewTextLimit(plan.req.Stop, plan.req.EffectiveMaxTokens())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest, "invalid_stop", err.Error(), "stop")
+		return
+	}
+
 	var text strings.Builder
 	var steps openai.StepLog
 
 	result, err := s.manager.Prompt(r.Context(), plan.turn, func(u acp.SessionUpdate) error {
 		piece, step := openai.FromUpdate(u)
-		text.WriteString(piece)
 		steps.Add(step)
+		if piece == "" {
+			return nil
+		}
+		emit, _ := limit.Push(piece)
+		text.WriteString(emit)
 		return nil
 	})
 	if err != nil {
 		s.writeAgentError(w, err)
 		return
 	}
+	text.WriteString(limit.Finish())
 
 	content := text.String()
 	var calls []openai.ToolCall
@@ -134,6 +151,9 @@ func (s *Server) blockingTurn(w http.ResponseWriter, r *http.Request, plan turnP
 	}
 
 	finish := openai.FinishReason(result.StopReason)
+	if limit.Capped() {
+		finish = openai.FinishLength
+	}
 	if len(calls) > 0 {
 		finish = openai.FinishToolCalls
 	}
@@ -163,6 +183,14 @@ func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, plan turnPla
 	if !ok {
 		writeError(w, http.StatusInternalServerError, openai.ErrTypeServer, "stream_unsupported",
 			"this server cannot stream responses", "")
+		return
+	}
+
+	// Build the output limiter before the status line goes out, so a bad stop
+	// value is still a clean error response.
+	limit, err := openai.NewTextLimit(plan.req.Stop, plan.req.EffectiveMaxTokens())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest, "invalid_stop", err.Error(), "stop")
 		return
 	}
 
@@ -199,9 +227,16 @@ func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, plan turnPla
 		if piece == "" {
 			return nil
 		}
-		if emit := hold.Push(piece); emit != "" {
-			text.WriteString(emit)
-			sendText(emit)
+		emit := hold.Push(piece)
+		if emit == "" {
+			return nil
+		}
+		// The tool hold runs first: stop sequences apply to the answer, not to
+		// an envelope that is about to be consumed.
+		allowed, _ := limit.Push(emit)
+		if allowed != "" {
+			text.WriteString(allowed)
+			sendText(allowed)
 		}
 		return nil
 	})
@@ -222,10 +257,21 @@ func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, plan turnPla
 	// Settle the hold: what is left is either the answer or a tool call.
 	rest, calls := hold.Finish()
 	calls = openai.LimitCalls(calls, plan.req.ParallelToolCalls)
-	text.WriteString(rest)
-	sendText(rest)
+	if rest != "" {
+		if allowed, _ := limit.Push(rest); allowed != "" {
+			text.WriteString(allowed)
+			sendText(allowed)
+		}
+	}
+	if tail := limit.Finish(); tail != "" {
+		text.WriteString(tail)
+		sendText(tail)
+	}
 
 	finish := openai.FinishReason(result.StopReason)
+	if limit.Capped() {
+		finish = openai.FinishLength
+	}
 	if len(calls) > 0 {
 		finish = openai.FinishToolCalls
 		send(newChunk(id, created, plan.req.Model, openai.Delta{ToolCalls: openai.ToolCallDeltas(calls)}, nil))

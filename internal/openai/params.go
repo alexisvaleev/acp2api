@@ -63,12 +63,12 @@ const (
 	reasonChoices    = "multiple choices are not yet supported; they arrive in stage 5"
 	reasonLegacyFns  = "the legacy functions API is not translated to ACP; use tools instead"
 	reasonStructured = "structured outputs are not yet enforced; they arrive in stage 4"
-	reasonStop       = "stop sequences are not yet applied to agent output; they arrive in stage 4"
-	reasonLength     = "output length is not yet capped; it arrives in stage 4"
 	reasonAudio      = "an ACP agent produces text, not audio"
 	reasonWebSearch  = "built-in server-side tools have no ACP equivalent; declare your own with tools"
 	reasonModalities = "only text output is supported; an ACP agent cannot produce audio"
 	reasonToolStrict = "strict schema enforcement is not applied; the schema is passed to the agent as a description"
+	reasonSuffix     = "a completion suffix cannot be produced by an agent that answers rather than continues text"
+	reasonBestOf     = "best_of would require sampling candidates the agent does not expose; use n instead"
 )
 
 // paramPolicy is the single source of truth for how every policed parameter is
@@ -88,6 +88,15 @@ var paramPolicy = map[string]ParamRule{
 	"tool_choice":         {Name: "tool_choice", Disposition: Supported},
 	"parallel_tool_calls": {Name: "parallel_tool_calls", Disposition: Supported},
 
+	/* Supported: honoured by post-processing the agent's output, since the
+	   agent owns its own generation and cannot be told to stop. */
+	"prompt":                {Name: "prompt", Disposition: Supported},
+	"echo":                  {Name: "echo", Disposition: Supported},
+	"stop":                  {Name: "stop", Disposition: Supported},
+	"max_tokens":            {Name: "max_tokens", Disposition: Supported},
+	"max_completion_tokens": {Name: "max_completion_tokens", Disposition: Supported},
+	"max_output_tokens":     {Name: "max_output_tokens", Disposition: Supported},
+
 	/* Accepted and reported: the agent owns its own sampling. */
 	"temperature":       {Name: "temperature", Disposition: Ignored, Reason: reasonSampling},
 	"top_p":             {Name: "top_p", Disposition: Ignored, Reason: reasonSampling},
@@ -106,16 +115,15 @@ var paramPolicy = map[string]ParamRule{
 	"metadata":         {Name: "metadata", Disposition: Ignored, Reason: reasonSteering},
 
 	/* Unsupported: ignoring these would make the response violate the request. */
-	"functions":             {Name: "functions", Disposition: Unsupported, Reason: reasonLegacyFns},
-	"function_call":         {Name: "function_call", Disposition: Unsupported, Reason: reasonLegacyFns},
-	"response_format":       {Name: "response_format", Disposition: Unsupported, Reason: reasonStructured},
-	"stop":                  {Name: "stop", Disposition: Unsupported, Reason: reasonStop},
-	"max_tokens":            {Name: "max_tokens", Disposition: Unsupported, Reason: reasonLength},
-	"max_completion_tokens": {Name: "max_completion_tokens", Disposition: Unsupported, Reason: reasonLength},
-	"logprobs":              {Name: "logprobs", Disposition: Unsupported, Reason: reasonLogprobs},
-	"top_logprobs":          {Name: "top_logprobs", Disposition: Unsupported, Reason: reasonLogprobs},
-	"audio":                 {Name: "audio", Disposition: Unsupported, Reason: reasonAudio},
-	"web_search_options":    {Name: "web_search_options", Disposition: Unsupported, Reason: reasonWebSearch},
+	"functions":          {Name: "functions", Disposition: Unsupported, Reason: reasonLegacyFns},
+	"function_call":      {Name: "function_call", Disposition: Unsupported, Reason: reasonLegacyFns},
+	"response_format":    {Name: "response_format", Disposition: Unsupported, Reason: reasonStructured},
+	"logprobs":           {Name: "logprobs", Disposition: Unsupported, Reason: reasonLogprobs},
+	"top_logprobs":       {Name: "top_logprobs", Disposition: Unsupported, Reason: reasonLogprobs},
+	"audio":              {Name: "audio", Disposition: Unsupported, Reason: reasonAudio},
+	"web_search_options": {Name: "web_search_options", Disposition: Unsupported, Reason: reasonWebSearch},
+	"suffix":             {Name: "suffix", Disposition: Unsupported, Reason: reasonSuffix},
+	"best_of":            {Name: "best_of", Disposition: Unsupported, Reason: reasonBestOf},
 	"n": {
 		Name: "n", Disposition: Unsupported, Reason: reasonChoices, Check: checkN,
 	},
@@ -152,12 +160,12 @@ func checkN(value any) (Disposition, string) {
 // is handled separately from the policy table.
 const ParamToolStrict = "tools[].function.strict"
 
-// ValidateRequest applies the parameter policy to a decoded request.
+// ValidateParams applies the parameter policy to any decoded request struct.
 //
 // It returns the parameters that were accepted but not honoured, sorted for
 // stable output, and the first parameter the gateway refuses to ignore.
-func ValidateRequest(req *ChatCompletionRequest) (ignored []string, bad *ParamError) {
-	walkPresent(req, func(name string, value any) {
+func ValidateParams(v any) (ignored []string, bad *ParamError) {
+	walkPresent(v, func(name string, value any) {
 		rule, ok := paramPolicy[name]
 		if !ok {
 			return
@@ -175,15 +183,22 @@ func ValidateRequest(req *ChatCompletionRequest) (ignored []string, bad *ParamEr
 			}
 		}
 	})
+	sort.Strings(ignored)
+	return ignored, bad
+}
+
+// ValidateRequest applies the parameter policy to a chat request, plus the
+// checks that only make sense with tools.
+func ValidateRequest(req *ChatCompletionRequest) (ignored []string, bad *ParamError) {
+	ignored, bad = ValidateParams(req)
 
 	// A tool may ask for strict schema enforcement. The gateway passes the
 	// schema to the agent as a description and does not validate the arguments
 	// against it, so the caller has to be told.
 	if requestsStrictTools(req.Tools) {
 		ignored = append(ignored, ParamToolStrict)
+		sort.Strings(ignored)
 	}
-
-	sort.Strings(ignored)
 	return ignored, bad
 }
 

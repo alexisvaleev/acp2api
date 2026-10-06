@@ -20,18 +20,15 @@ func decode(t *testing.T, body string) *ChatCompletionRequest {
 
 func TestUnsupportedParametersAreRejected(t *testing.T) {
 	cases := map[string]string{
-		"functions":             `{"functions":[{"name":"f"}]}`,
-		"function_call":         `{"function_call":"auto"}`,
-		"response_format":       `{"response_format":{"type":"json_object"}}`,
-		"stop":                  `{"stop":["END"]}`,
-		"max_tokens":            `{"max_tokens":100}`,
-		"max_completion_tokens": `{"max_completion_tokens":100}`,
-		"logprobs":              `{"logprobs":true}`,
-		"top_logprobs":          `{"top_logprobs":5}`,
-		"n":                     `{"n":3}`,
-		"audio":                 `{"audio":{"voice":"alloy","format":"wav"}}`,
-		"web_search_options":    `{"web_search_options":{}}`,
-		"modalities":            `{"modalities":["text","audio"]}`,
+		"functions":          `{"functions":[{"name":"f"}]}`,
+		"function_call":      `{"function_call":"auto"}`,
+		"response_format":    `{"response_format":{"type":"json_object"}}`,
+		"logprobs":           `{"logprobs":true}`,
+		"top_logprobs":       `{"top_logprobs":5}`,
+		"n":                  `{"n":3}`,
+		"audio":              `{"audio":{"voice":"alloy","format":"wav"}}`,
+		"web_search_options": `{"web_search_options":{}}`,
+		"modalities":         `{"modalities":["text","audio"]}`,
 	}
 
 	for want, body := range cases {
@@ -224,14 +221,24 @@ func TestSupportedRequestIsClean(t *testing.T) {
 	}
 }
 
-// TestPolicyCoversEveryPolicedField guards against drift: a field added to the
+// requestStructs lists every request type the shared policy applies to.
+func requestStructs() []any {
+	return []any{ChatCompletionRequest{}, CompletionRequest{}, ResponsesRequest{}}
+}
+
+// TestPolicyCoversEveryPolicedField guards against drift: a field added to a
 // request struct without a rule would be silently ignored, which is exactly the
 // failure this stage exists to remove.
 func TestPolicyCoversEveryPolicedField(t *testing.T) {
-	fields := jsonFieldNames(ChatCompletionRequest{})
+	fields := map[string]bool{}
+	for _, v := range requestStructs() {
+		for name := range jsonFieldNames(v) {
+			fields[name] = true
+		}
+	}
 	for _, name := range PolicyNames() {
 		if !fields[name] {
-			t.Fatalf("policy names %q but the request struct has no such field", name)
+			t.Fatalf("policy names %q but no request struct has that field", name)
 		}
 	}
 }
@@ -240,9 +247,8 @@ func TestPolicyCoversEveryPolicedField(t *testing.T) {
 // presence detection depends on: a value-dependent parameter must be a pointer,
 // slice, map, or RawMessage, never a bare scalar.
 func TestPolicedFieldsArePointersOrContainers(t *testing.T) {
-	typ := reflect.TypeOf(ChatCompletionRequest{})
 	for _, name := range PolicyNames() {
-		field, ok := fieldByJSONName(typ, name)
+		field, ok := fieldInAnyStruct(name)
 		if !ok {
 			continue
 		}
@@ -255,6 +261,16 @@ func TestPolicedFieldsArePointersOrContainers(t *testing.T) {
 				name, field.Type.Kind())
 		}
 	}
+}
+
+// fieldInAnyStruct finds a policy field in whichever request type declares it.
+func fieldInAnyStruct(name string) (reflect.StructField, bool) {
+	for _, v := range requestStructs() {
+		if field, ok := fieldByJSONName(reflect.TypeOf(v), name); ok {
+			return field, true
+		}
+	}
+	return reflect.StructField{}, false
 }
 
 // jsonFieldNames returns the JSON names of a struct's exported fields.

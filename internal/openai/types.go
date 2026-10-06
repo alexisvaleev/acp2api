@@ -107,6 +107,15 @@ type ChatCompletionRequest struct {
 	WebSearchOptions json.RawMessage `json:"web_search_options,omitempty"`
 }
 
+// EffectiveMaxTokens returns whichever output cap the caller set. The OpenAI
+// API renamed max_tokens to max_completion_tokens; either may appear.
+func (r ChatCompletionRequest) EffectiveMaxTokens() *int {
+	if r.MaxCompletionTokens != nil {
+		return r.MaxCompletionTokens
+	}
+	return r.MaxTokens
+}
+
 // StreamOptions mirrors the OpenAI field.
 type StreamOptions struct {
 	IncludeUsage bool `json:"include_usage,omitempty"`
