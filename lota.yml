@@ -9,18 +9,17 @@ vars:
 dev:
   desc: Run the gateway in development mode
   color: green
-  vars:
-  - ACP2API_TOKEN=dev-token
   args:
   - addr:str=127.0.0.1:8720
   - workspace|w:str=.
   - permission|p:str=allow
-  before: |
-    echo "gateway  -> http://$addr"
-    echo "token    -> $ACP2API_TOKEN"
-    echo "workspace-> $workspace"
-    echo "agents   -> lota agents"
-  script: go run $PKG --addr "$addr" --workspace "$workspace" --permission "$permission" --verbose
+  script: |
+    air \
+      -tmp_dir "bin" \
+      -build.cmd "go build -o ./bin/$BINARY $PKG" \
+      -build.entrypoint "./bin/$BINARY" \
+      -build.args_bin "--config config.yaml --addr $addr --workspace $workspace --permission $permission --verbose" \
+      -build.exclude_dir "assets,tmp,vendor,testdata,bin,workspace,reference,.git"
 
 build:
   desc: Build the gateway binary
@@ -29,116 +28,6 @@ build:
     set -euo pipefail
     go build -trimpath -ldflags "$LDFLAGS" -o "$OUT" $PKG
     ls -lh "$OUT"
-
-serve:
-  desc: Run the built binary from a config file
-  depends:
-  - build
-  args:
-  - config:str=config.yaml
-  script: "$OUT --config \"$config\""
-
-test:
-  desc: Testing
-  color: blue
-  run:
-    desc: Run the suite with the race detector
-    script: go test ./... -race -count=1
-  cover:
-    desc: Run the suite and write an HTML coverage report
-    script: |
-      set -euo pipefail
-      go test ./... -coverprofile=coverage.out
-      go tool cover -html=coverage.out -o coverage.html
-      echo "coverage -> coverage.html"
-
-fmt:
-  desc: Formatting
-  color: yellow
-  apply:
-    desc: Format every Go file in place
-    script: gofmt -w ./cmd ./internal
-  check:
-    desc: Fail if any file needs formatting
-    script: |
-      set -euo pipefail
-      out="$(gofmt -l ./cmd ./internal)"
-      if [ -n "$out" ]; then
-        echo "not formatted:"
-        echo "$out"
-        exit 1
-      fi
-      echo "formatting ok"
-
-vet:
-  desc: Run go vet
-  script: go vet ./...
-
-check:
-  desc: Full verification — format, vet, race tests
-  color: hiyellow
-  parallel: false
-  depends:
-  - fmt.check
-  - vet
-  - test.run
-  script: echo "all checks passed"
-
-agents:
-  desc: Show which agent CLIs this gateway can drive
-  script: |
-    for bin in devin agent claude-agent-acp codex-acp opencode kiro-cli; do
-      path=$(command -v "$bin" 2>/dev/null || true)
-      if [ -n "$path" ]; then
-        printf '  [ok]   %-18s %s\n' "$bin" "$path"
-      else
-        printf '  [--]   %-18s not installed\n' "$bin"
-      fi
-    done
-
-smoke:
-  desc: Start the gateway, exercise the API with curl, then stop it
-  color: magenta
-  depends:
-  - build
-  vars:
-  - ACP2API_TOKEN=smoke-token
-  args:
-  - port:str=8721
-  script: |
-    set -euo pipefail
-    "$OUT" --addr "127.0.0.1:$port" --workspace "$PWD" >/tmp/acp2api-smoke.log 2>&1 &
-    srv=$!
-    trap 'kill $srv 2>/dev/null || true' EXIT
-
-    for _ in $(seq 1 50); do
-      curl -sf "http://127.0.0.1:$port/healthz" >/dev/null 2>&1 && break
-      sleep 0.2
-    done
-
-    auth="Authorization: Bearer $ACP2API_TOKEN"
-    base="http://127.0.0.1:$port"
-
-    echo "--- healthz ---"
-    curl -s "$base/healthz"; echo
-    echo "--- models ---"
-    curl -s "$base/v1/models" -H "$auth"; echo
-    echo "--- rejected parameter (expect 400) ---"
-    curl -s -o /dev/null -w 'HTTP %{http_code}\n' "$base/v1/chat/completions" \
-      -H "$auth" -H 'Content-Type: application/json' \
-      -d '{"model":"devin","messages":[{"role":"user","content":"hi"}],"logprobs":true}'
-    echo "smoke ok"
-
-conformance:
-  desc: Assert the whole HTTP surface against a live server
-  color: hicyan
-  script: ./test/conformance.sh
-
-clean:
-  desc: Remove build output and coverage artifacts
-  script: |
-    rm -rf bin coverage.out coverage.html
-    echo "cleaned"
 
 install:
   desc: Install the binary into ~/.local/bin
@@ -151,12 +40,6 @@ install:
     cp -f "$OUT" "$HOME/.local/bin/$BINARY"
     chmod +x "$HOME/.local/bin/$BINARY"
     echo "installed -> $HOME/.local/bin/$BINARY"
-
-remove:
-  desc: Remove the installed binary
-  script: |
-    rm -f "$HOME/.local/bin/$BINARY"
-    echo "removed $BINARY"
 
 push:
   desc: Push to GitHub

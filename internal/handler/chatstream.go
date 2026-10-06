@@ -55,10 +55,19 @@ func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, plan turnPla
 			send(newChunk(id, created, plan.req.Model, openai.Delta{Content: text}, nil))
 		}
 	}
+	// Reasoning streams ahead of the answer and outside both the tool hold and
+	// the output limit: a thought is not the reply, so it is neither held back
+	// as a possible envelope nor counted against max_tokens.
+	sendReasoning := func(text string) {
+		if text != "" {
+			send(newChunk(id, created, plan.req.Model, openai.Delta{ReasoningContent: text}, nil))
+		}
+	}
 
 	send(newChunk(id, created, plan.req.Model, openai.Delta{Role: "assistant"}, nil))
 
 	var text strings.Builder
+	var reasoning strings.Builder
 	var steps openai.StepLog
 	hold := openai.NewToolStream(plan.tools)
 
@@ -68,8 +77,12 @@ func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, plan turnPla
 	bufferOnly := plan.format.Active()
 
 	result, err := s.manager.Prompt(r.Context(), plan.turn, func(u acp.SessionUpdate) error {
-		piece, step := openai.FromUpdate(u)
+		piece, thought, step := openai.FromUpdate(u)
 		steps.Add(step)
+		if thought != "" {
+			reasoning.WriteString(thought)
+			sendReasoning(thought)
+		}
 		if piece == "" {
 			return nil
 		}
@@ -125,7 +138,7 @@ func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, plan turnPla
 	// A structured answer is verified here, and retried once if it is wrong.
 	if bufferOnly && len(calls) == 0 {
 		out, formatErr := s.enforceFormat(r, plan, turnOutcome{
-			text: text.String(), result: result, steps: steps, capped: capped,
+			text: text.String(), reasoning: reasoning.String(), result: result, steps: steps, capped: capped,
 		})
 		if formatErr != nil {
 			send(openai.ErrorResponse{Error: openai.ErrorBody{
@@ -189,7 +202,7 @@ func (s *Server) writeAgentError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusGatewayTimeout, openai.ErrTypeServer, "timeout", err.Error(), "")
 		return
 	}
-	s.log.Warn("handler: agent turn failed", "error", err)
+	s.log.With("module", "handler").Warn("agent turn failed", "error", err)
 	writeError(w, http.StatusBadGateway, openai.ErrTypeServer, "agent_error", err.Error(), "")
 }
 

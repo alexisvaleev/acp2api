@@ -135,7 +135,7 @@ func (m *Manager) startConnection(a agent.Agent, workspace string) (*connection,
 		return nil, err
 	}
 
-	slog.Info("session: agent ready",
+	slog.With("module", "session").Info("agent ready",
 		"agent", a.ID, "pid", cl.PID(), "workspace", workspace, "images", c.capabilities.Images)
 	return c, nil
 }
@@ -171,7 +171,7 @@ func (c *connection) authenticate(ctx context.Context, cl *acp.Client, a agent.A
 			"session: agent %q is configured with api_key_env %q but no value was resolved at startup",
 			a.ID, a.APIKeyEnv)
 	default:
-		slog.Warn("session: skipping authenticate because no key was resolved",
+		slog.With("module", "session").Warn("skipping authenticate because no key was resolved",
 			"agent", a.ID,
 			"advertised_method", request.MethodID,
 			"hint", "set api_key_env to the variable holding the agent's key, "+
@@ -183,7 +183,7 @@ func (c *connection) authenticate(ctx context.Context, cl *acp.Client, a agent.A
 		return fmt.Errorf("session: authenticate agent %q with method %q: %w",
 			a.ID, request.MethodID, err)
 	}
-	slog.Debug("session: authenticated",
+	slog.With("module", "session").Debug("authenticated",
 		"agent", a.ID, "method", request.MethodID, "with_key", request.Meta != nil)
 	return nil
 }
@@ -366,7 +366,7 @@ func (c *connection) applyMode(ctx context.Context, session acp.NewSessionRespon
 		}); err != nil {
 			return fmt.Errorf("session: select mode %q on agent %q: %w", mode, c.agent.ID, err)
 		}
-		slog.Info("session: mode selected", "agent", c.agent.ID, "mode", mode)
+		slog.With("module", "session").Info("mode selected", "agent", c.agent.ID, "mode", mode)
 		return nil
 	}
 

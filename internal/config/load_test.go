@@ -49,6 +49,54 @@ agents:
 	}
 }
 
+// TestLoadAcceptsAProxyURLString covers the shorthand: a bare string is the url
+// of an otherwise empty proxy block, globally and per agent.
+func TestLoadAcceptsAProxyURLString(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	body := `
+proxy: http://proxy:3128
+
+agents:
+  - id: devin
+    command: devin
+    proxy: socks5://127.0.0.1:1080
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Proxy.URL != "http://proxy:3128" {
+		t.Fatalf("global proxy url = %q", cfg.Proxy.URL)
+	}
+	if cfg.Agents[0].Proxy == nil || cfg.Agents[0].Proxy.URL != "socks5://127.0.0.1:1080" {
+		t.Fatalf("agent proxy = %+v", cfg.Agents[0].Proxy)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+// TestLoadProxyStringStillNeedsAScheme: the shorthand is convenience, not a
+// licence to skip validation — a bare host:port is rejected, not guessed at.
+func TestLoadProxyStringStillNeedsAScheme(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("proxy: 127.0.0.1:2080\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected a scheme-less proxy url to be rejected")
+	}
+}
+
 // TestLoadAcceptsJSON is the migration story: YAML is a superset of JSON, so an
 // existing config keeps working through the same parser.
 func TestLoadAcceptsJSON(t *testing.T) {

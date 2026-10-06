@@ -230,6 +230,69 @@ func TestChatCompletionStreaming(t *testing.T) {
 	}
 }
 
+func TestChatCompletionExposesReasoning(t *testing.T) {
+	srv := newTestServer(t, map[string]string{
+		"FAKE_AGENT_THOUGHT": "let me think",
+		"FAKE_AGENT_CHUNKS":  "2",
+	}, "")
+
+	resp := post(t, srv, "", map[string]any{
+		"model":    "fake",
+		"messages": []map[string]string{{"role": "user", "content": "hello"}},
+	})
+	defer resp.Body.Close()
+
+	var completion openai.ChatCompletionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&completion); err != nil {
+		t.Fatal(err)
+	}
+	message := completion.Choices[0].Message
+	if message.ReasoningContent != "let me think" {
+		t.Fatalf("reasoning_content = %q, want %q", message.ReasoningContent, "let me think")
+	}
+	if got := message.ContentString(); got != "chunk1 chunk2 " {
+		t.Fatalf("content = %q", got)
+	}
+}
+
+func TestChatCompletionStreamsReasoning(t *testing.T) {
+	srv := newTestServer(t, map[string]string{
+		"FAKE_AGENT_THOUGHT": "thinking hard",
+		"FAKE_AGENT_CHUNKS":  "2",
+	}, "")
+
+	resp := post(t, srv, "", map[string]any{
+		"model":    "fake",
+		"stream":   true,
+		"messages": []map[string]string{{"role": "user", "content": "hello"}},
+	})
+	defer resp.Body.Close()
+
+	events := readSSE(t, resp.Body)
+
+	var reasoning, text strings.Builder
+	for _, raw := range events {
+		if raw == "[DONE]" {
+			continue
+		}
+		var chunk openai.ChatCompletionChunk
+		if err := json.Unmarshal([]byte(raw), &chunk); err != nil {
+			t.Fatalf("decode chunk %q: %v", raw, err)
+		}
+		for _, c := range chunk.Choices {
+			reasoning.WriteString(c.Delta.ReasoningContent)
+			text.WriteString(c.Delta.Content)
+		}
+	}
+
+	if reasoning.String() != "thinking hard" {
+		t.Fatalf("streamed reasoning = %q, want %q", reasoning.String(), "thinking hard")
+	}
+	if text.String() != "chunk1 chunk2 " {
+		t.Fatalf("streamed text = %q", text.String())
+	}
+}
+
 func TestUnknownModelIsRejected(t *testing.T) {
 	srv := newTestServer(t, nil, "")
 

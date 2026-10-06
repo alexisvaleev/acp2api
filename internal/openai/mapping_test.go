@@ -98,22 +98,25 @@ func TestBuildPromptRejectsEmptyRequests(t *testing.T) {
 
 func TestFromUpdate(t *testing.T) {
 	t.Run("message chunk is text", func(t *testing.T) {
-		text, step := FromUpdate(acp.SessionUpdate{
+		text, reasoning, step := FromUpdate(acp.SessionUpdate{
 			SessionUpdate: acp.UpdateAgentMessageChunk,
 			Content:       &acp.ContentBlock{Type: "text", Text: "hi"},
 		})
-		if text != "hi" || step != nil {
-			t.Fatalf("text=%q step=%+v", text, step)
+		if text != "hi" || reasoning != "" || step != nil {
+			t.Fatalf("text=%q reasoning=%q step=%+v", text, reasoning, step)
 		}
 	})
 
-	t.Run("thought is a step, not content", func(t *testing.T) {
-		text, step := FromUpdate(acp.SessionUpdate{
+	t.Run("thought is reasoning and a step, not content", func(t *testing.T) {
+		text, reasoning, step := FromUpdate(acp.SessionUpdate{
 			SessionUpdate: acp.UpdateAgentThoughtChunk,
 			Content:       &acp.ContentBlock{Type: "text", Text: "hmm"},
 		})
 		if text != "" {
 			t.Fatalf("text = %q, want empty", text)
+		}
+		if reasoning != "hmm" {
+			t.Fatalf("reasoning = %q, want hmm", reasoning)
 		}
 		if step == nil || step.Type != StepThought || step.Text != "hmm" {
 			t.Fatalf("step = %+v", step)
@@ -121,7 +124,7 @@ func TestFromUpdate(t *testing.T) {
 	})
 
 	t.Run("tool call", func(t *testing.T) {
-		text, step := FromUpdate(acp.SessionUpdate{
+		text, _, step := FromUpdate(acp.SessionUpdate{
 			SessionUpdate: acp.UpdateToolCall,
 			ToolCallID:    "tc1",
 			Title:         "Run tests",
@@ -137,7 +140,7 @@ func TestFromUpdate(t *testing.T) {
 	})
 
 	t.Run("plan", func(t *testing.T) {
-		_, step := FromUpdate(acp.SessionUpdate{
+		_, _, step := FromUpdate(acp.SessionUpdate{
 			SessionUpdate: acp.UpdatePlan,
 			Entries:       []acp.PlanEntry{{Content: "step one"}, {Content: "step two"}},
 		})
@@ -147,9 +150,9 @@ func TestFromUpdate(t *testing.T) {
 	})
 
 	t.Run("unrelated update is ignored", func(t *testing.T) {
-		text, step := FromUpdate(acp.SessionUpdate{SessionUpdate: acp.UpdateAvailableCommands})
-		if text != "" || step != nil {
-			t.Fatalf("text=%q step=%+v", text, step)
+		text, reasoning, step := FromUpdate(acp.SessionUpdate{SessionUpdate: acp.UpdateAvailableCommands})
+		if text != "" || reasoning != "" || step != nil {
+			t.Fatalf("text=%q reasoning=%q step=%+v", text, reasoning, step)
 		}
 	})
 }

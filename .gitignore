@@ -15,9 +15,10 @@
 /.env
 /workspace/
 
-# Local deployment files: production config, systemd unit, env template.
-# These describe one machine and are not shared through the repository.
-/prod/
+# Container deployment: the compose file holds machine-local paths and
+# mounts; the image is built from the committed Dockerfile.
+/docker-compose.yml
+/docker-compose.*.yml
 
 # Editor / OS
 .vscode-dev/

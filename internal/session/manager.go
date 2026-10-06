@@ -255,7 +255,7 @@ func (m *Manager) reapOnce() {
 	m.mu.Unlock()
 
 	for _, c := range doomed {
-		slog.Info("session: closing idle agent", "agent", c.agent.ID)
+		slog.With("module", "session").Info("closing idle agent", "agent", c.agent.ID)
 		_ = c.client.Close()
 	}
 }

@@ -58,7 +58,7 @@ func (c *Client) waitLoop() {
 func (c *Client) handleLine(line []byte) {
 	var msg Message
 	if err := json.Unmarshal(bytes.TrimSpace(line), &msg); err != nil {
-		slog.Debug("acp: dropping non-JSON line from agent", "line", truncate(line, 200))
+		slog.With("module", "acp").Debug("dropping non-JSON line from agent", "line", truncate(line, 200))
 		return
 	}
 	c.handleMessage(&msg)

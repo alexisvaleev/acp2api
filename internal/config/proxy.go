@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"net/url"
+
+	"gopkg.in/yaml.v3"
 )
 
 // ProxyConfig is the proxy the agent CLIs should use.
@@ -20,6 +22,21 @@ type ProxyConfig struct {
 	HTTPS string `json:"https" yaml:"https"`
 	// NoProxy lists hosts that bypass the proxy, comma separated.
 	NoProxy string `json:"no_proxy" yaml:"no_proxy"`
+}
+
+// UnmarshalYAML accepts either the block form or a bare url string, so
+// `proxy: http://proxy:3128` is shorthand for `proxy: {url: http://proxy:3128}`.
+// A scalar is convenient for the common single-url case and matches the
+// one-line habit people bring from HTTP_PROXY.
+func (p *ProxyConfig) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		p.URL = value.Value
+		return nil
+	}
+	// Decode into the existing value so a block still merges over defaults
+	// rather than replacing them wholesale.
+	type plain ProxyConfig
+	return value.Decode((*plain)(p))
 }
 
 // validate checks the URLs in a proxy block. prefix names the block in the

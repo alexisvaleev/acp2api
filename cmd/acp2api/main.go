@@ -21,6 +21,7 @@ import (
 	"github.com/quonaro/acp2api/internal/client"
 	"github.com/quonaro/acp2api/internal/config"
 	"github.com/quonaro/acp2api/internal/handler"
+	"github.com/quonaro/acp2api/internal/logger"
 	"github.com/quonaro/acp2api/internal/session"
 	"github.com/quonaro/acp2api/internal/version"
 )
@@ -48,12 +49,8 @@ func run() error {
 		return nil
 	}
 
-	level := slog.LevelInfo
-	if *verbose {
-		level = slog.LevelDebug
-	}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
-	slog.SetDefault(logger)
+	log := logger.New(*verbose)
+	slog.SetDefault(log)
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
@@ -99,7 +96,7 @@ func run() error {
 	}
 	defer func() { _ = manager.Close() }()
 
-	server := handler.New(manager, handler.Options{Token: cfg.Token, Logger: logger})
+	server := handler.New(manager, handler.Options{Token: cfg.Token, Logger: log})
 
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
@@ -121,7 +118,7 @@ func run() error {
 
 	serveErr := make(chan error, 1)
 	go func() {
-		logger.Info("acp2api listening",
+		log.With("module", "acp2api").Info("listening",
 			"addr", cfg.Addr,
 			"workspace", workspaceDir,
 			"agents", strings.Join(agentIDs(registry), ","),
@@ -138,7 +135,7 @@ func run() error {
 	case err := <-serveErr:
 		return err
 	case <-ctx.Done():
-		logger.Info("acp2api shutting down")
+		log.With("module", "acp2api").Info("shutting down")
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

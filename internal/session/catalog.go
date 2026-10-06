@@ -39,7 +39,7 @@ func (c *connection) captureCatalog(session acp.NewSessionResponse) {
 		c.mu.Lock()
 		c.modelOption = &option
 		c.mu.Unlock()
-		slog.Debug("session: model catalog captured",
+		slog.With("module", "session").Debug("model catalog captured",
 			"agent", c.agent.ID, "option", option.ID, "models", len(option.Options),
 			"current", option.CurrentValue, "sample", sampleValues(option.Options))
 		return
@@ -124,7 +124,7 @@ func (c *connection) selectModel(ctx context.Context, sessionID, model string) e
 		}); err != nil {
 			return fmt.Errorf("session: select model %q on agent %q: %w", model, c.agent.ID, err)
 		}
-		slog.Debug("session: model selected", "agent", c.agent.ID, "model", model)
+		slog.With("module", "session").Debug("model selected", "agent", c.agent.ID, "model", model)
 		return nil
 	}
 
@@ -193,14 +193,14 @@ func (m *Manager) Discover(ctx context.Context) {
 		}
 		conn, err := m.connection(ctx, a, workspace)
 		if err != nil {
-			slog.Warn("session: model discovery failed", "agent", a.ID, "error", err)
+			slog.With("module", "session").Warn("model discovery failed", "agent", a.ID, "error", err)
 			continue
 		}
 		if err := conn.discoverCatalog(ctx); err != nil {
-			slog.Warn("session: model discovery failed", "agent", a.ID, "error", err)
+			slog.With("module", "session").Warn("model discovery failed", "agent", a.ID, "error", err)
 			continue
 		}
-		slog.Info("session: models discovered", "agent", a.ID, "count", len(m.Models(a.ID)))
+		slog.With("module", "session").Info("models discovered", "agent", a.ID, "count", len(m.Models(a.ID)))
 	}
 }
 

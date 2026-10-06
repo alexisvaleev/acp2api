@@ -120,11 +120,13 @@ func roleLabel(role string) string {
 }
 
 // FromUpdate maps one ACP session update onto the OpenAI-facing view: the
-// incremental assistant text, and an optional activity step.
+// incremental assistant text, the agent's reasoning, and an optional activity
+// step.
 //
-// Thoughts are not part of the assistant reply — they are surfaced as steps so
-// the reasoning is visible without polluting the content.
-func FromUpdate(u acp.SessionUpdate) (text string, step *Step) {
+// Thoughts are not assistant prose — they travel in reasoning, which the
+// handlers surface as `reasoning_content`, and they also appear as steps so the
+// `acp` extension keeps a complete activity summary.
+func FromUpdate(u acp.SessionUpdate) (text, reasoning string, step *Step) {
 	switch u.SessionUpdate {
 	case acp.UpdateAgentMessageChunk:
 		if u.Content != nil {
@@ -132,6 +134,7 @@ func FromUpdate(u acp.SessionUpdate) (text string, step *Step) {
 		}
 	case acp.UpdateAgentThoughtChunk:
 		if u.Content != nil && u.Content.Text != "" {
+			reasoning = u.Content.Text
 			step = &Step{Type: StepThought, Text: u.Content.Text}
 		}
 	case acp.UpdateToolCall:
@@ -152,7 +155,7 @@ func FromUpdate(u acp.SessionUpdate) (text string, step *Step) {
 	case acp.UpdatePlan:
 		step = &Step{Type: StepPlan, Text: planSummary(u.Entries)}
 	}
-	return text, step
+	return text, reasoning, step
 }
 
 // planSummary renders a plan as a single line.

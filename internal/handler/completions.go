@@ -102,7 +102,7 @@ func (s *Server) runPrompt(r *http.Request, req openai.CompletionRequest, prompt
 		Workspace:      req.Workspace,
 		Prompt:         prompt,
 	}, func(u acp.SessionUpdate) error {
-		piece, step := openai.FromUpdate(u)
+		piece, _, step := openai.FromUpdate(u)
 		steps.Add(step)
 		if piece == "" {
 			return nil
@@ -268,7 +268,7 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, req op
 		Workspace:      req.Workspace,
 		Prompt:         prompt,
 	}, func(u acp.SessionUpdate) error {
-		piece, step := openai.FromUpdate(u)
+		piece, _, step := openai.FromUpdate(u)
 		steps.Add(step)
 		if piece == "" {
 			return nil

@@ -109,7 +109,7 @@ func ResolveCredentials(agents []Agent, modules []Module, source Source) ([]Agen
 					a.ID, a.APIKeyEnv)
 			}
 			a.APIKey = key
-			slog.Info("agent: credential resolved", "agent", a.ID, "source", a.APIKeyEnv)
+			slog.With("module", "agent").Info("credential resolved", "agent", a.ID, "source", a.APIKeyEnv)
 			continue
 		}
 
@@ -130,7 +130,7 @@ func ResolveCredentials(agents []Agent, modules []Module, source Source) ([]Agen
 		}
 		if key != "" {
 			a.APIKey = key
-			slog.Info("agent: credential resolved", "agent", a.ID, "source", "module")
+			slog.With("module", "agent").Info("credential resolved", "agent", a.ID, "source", "module")
 		}
 	}
 	return out, nil

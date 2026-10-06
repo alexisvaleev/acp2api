@@ -138,7 +138,7 @@ func (s *Server) blockingResponse(w http.ResponseWriter, r *http.Request, plan r
 	var steps openai.StepLog
 
 	result, err := s.manager.Prompt(r.Context(), plan.turn, func(u acp.SessionUpdate) error {
-		piece, step := openai.FromUpdate(u)
+		piece, _, step := openai.FromUpdate(u)
 		text.WriteString(piece)
 		steps.Add(step)
 		return nil

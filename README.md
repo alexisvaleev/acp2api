@@ -21,7 +21,7 @@ The dev commands live in `lota.yml`:
 
 ```sh
 lota agents       # which agent CLIs are installed on this machine
-lota dev          # run the gateway with the dev token, verbose
+lota dev          # run the gateway under air: rebuilds and restarts on change
 lota smoke        # build, start, curl the API, stop
 lota conformance  # assert the whole HTTP surface against a live server
 lota check        # format, vet, race tests
@@ -35,6 +35,12 @@ lota dev --addr 127.0.0.1:9000
 lota dev -p deny                      # reject every permission request
 ```
 
+`lota dev` runs the gateway through [air](https://github.com/air-verse/air):
+it reads `config.yaml`, builds to `bin/acp2api`, and rebuilds and restarts the
+gateway whenever a `.go` file changes. `bin/` and `workspace/` are excluded
+from the watcher — the agents write into the workspace, and a rebuild per
+agent-written file would be a reload loop.
+
 Without `lota`, the binary is ordinary:
 
 ```sh
@@ -45,6 +51,18 @@ ACP2API_TOKEN=dev-token ./bin/acp2api --workspace ~/code/some-repo --verbose
 Flags: `--config`, `--addr`, `--workspace`, `--permission`, `--verbose`,
 `--version`. Environment: `ACP2API_ADDR`, `ACP2API_TOKEN`, `ACP2API_WORKSPACE`,
 `ACP2API_PERMISSION`.
+
+### Logs
+
+The gateway logs to stderr, one record per line:
+
+```text
+INFO [session] | agent ready | agent=devin pid=91240 workspace=. images=true
+```
+
+The subsystem — `acp2api`, `session`, `agent`, `acp`, `handler` — is shown in
+brackets, followed by the message and its `key=value` attributes. `--verbose`
+adds debug records and colors the level name.
 
 ### Quick start
 
@@ -70,6 +88,58 @@ curl -s localhost:8720/v1/chat/completions \
 
 Any OpenAI SDK works — point `base_url` at the gateway and pass the token as the
 API key.
+
+### A web UI next to it
+
+The gateway stays on the host — `lota dev` — and only the UI is
+containerised. That is deliberate: an agent CLI is a *process* that reads the
+user's home (credentials, MCP config, caches) and needs the runtimes its MCP
+servers call (`npx`, `go`), all of which are already set up on the host and
+would otherwise have to be mounted into an image.
+
+A worked `docker-compose.yml` is local-only (gitignored). It runs Open WebUI —
+multi-user, with an admin panel — and reaches the host's gateway through host
+networking:
+
+```yaml
+network_mode: host
+environment:
+  OPENAI_API_BASE_URLS: http://127.0.0.1:8720/v1
+  OPENAI_API_KEYS: dev-token      # must match the gateway's token
+  HOST: 127.0.0.1                 # uvicorn binds here, not by a ports mapping
+  PORT: "3000"
+```
+
+Host networking is not a shortcut: a bridge container cannot reach the host's
+loopback — `127.0.0.1` inside it is the container itself — and the gateway
+binds loopback by default. The UI's own bind is kept on `127.0.0.1` so it does
+not land on the LAN.
+
+`config.yaml`, `docker-compose.yml` and `workspace/` are machine-local too,
+and they hold their values literally — no environment indirection.
+
+### Reaching the agents' APIs through a proxy
+
+If the host needs a proxy to reach an agent's API — a corporate egress, or an
+API that is not served in the host's region — name it in the `proxy:` block,
+fed from the environment:
+
+```yaml
+proxy:
+  url: ${ACP2API_PROXY_URL:-}      # e.g. http://127.0.0.1:2080
+  no_proxy: localhost,127.0.0.1
+```
+
+For the common single-url case the block collapses to a bare string —
+`proxy: http://127.0.0.1:2080` is shorthand for `proxy: {url: …}`. A scheme is
+still required; a bare `host:port` is rejected rather than guessed at.
+
+The gateway renders it as `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and
+`NO_PROXY` (both cases) on every agent it spawns, and reports the redacted
+value in its startup line. Note that the agents inherit the process
+environment as well, so running the gateway from a shell that already exports
+`HTTPS_PROXY` is enough; the `proxy:` block is what makes it explicit and
+per-agent.
 
 ## Endpoints
 
@@ -224,6 +294,37 @@ cannot be an envelope, so a JSON-shaped *answer* is delayed, never swallowed.
 The agent keeps its own tools. This gateway lets it work in the workspace it was
 given; caller tools are additional, not a replacement. That is the opposite of
 `cli-agent-gateway`, whose host must never execute anything.
+
+## Reasoning
+
+An agent's thoughts arrive as ACP `agent_thought_chunk` updates. They are not
+part of the answer, so they never enter `content`. Instead they travel in
+`reasoning_content`, the field DeepSeek introduced and clients such as Open WebUI
+render, on both the message and the streaming delta:
+
+```json
+{
+  "choices": [{
+    "message": {
+      "role": "assistant",
+      "reasoning_content": "The user wants …",
+      "content": "Here is the answer."
+    },
+    "finish_reason": "stop"
+  }]
+}
+```
+
+`reasoning_content` is not part of the canonical OpenAI schema, but it is the de
+facto convention for exposing a model's thinking, and it is the only shape a
+reasoning-aware client will display. A client that does not know it ignores the
+field, which is exactly how an additive field should behave.
+
+On a stream the reasoning deltas arrive before the answer, and they are sent
+outside both the tool-call hold and the `max_tokens` / `stop` limits: a thought
+is not the reply, so it is neither held back as a possible envelope nor counted
+against the output cap. The thoughts are also kept in `acp.steps` (type
+`thought`), so the `acp` extension still carries a complete activity summary.
 
 ## The `acp` extension
 

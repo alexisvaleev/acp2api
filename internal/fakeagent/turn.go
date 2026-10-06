@@ -33,6 +33,16 @@ func (a *agent) turn(msg message) {
 		prompt += "[" + block.Type + "]"
 	}
 
+	for _, piece := range a.thoughtPieces() {
+		a.notify("session/update", map[string]any{
+			"sessionId": sessionID,
+			"update": map[string]any{
+				"sessionUpdate": "agent_thought_chunk",
+				"content":       map[string]any{"type": "text", "text": piece},
+			},
+		})
+	}
+
 	for _, piece := range a.turnPieces(prompt) {
 		a.notify("session/update", map[string]any{
 			"sessionId": sessionID,
@@ -76,6 +86,16 @@ func (a *agent) turn(msg message) {
 		a.out.Flush()
 		os.Exit(0)
 	}
+}
+
+// thoughtPieces returns the reasoning deltas for one turn, emitted before the
+// answer as agent_thought_chunk updates.
+func (a *agent) thoughtPieces() []string {
+	thought := os.Getenv("FAKE_AGENT_THOUGHT")
+	if thought == "" {
+		return nil
+	}
+	return splitEvery(thought, envInt("FAKE_AGENT_CHUNKS", 2))
 }
 
 // turnPieces returns the text deltas for one turn.

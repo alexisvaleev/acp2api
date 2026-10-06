@@ -140,11 +140,12 @@ type turnPlan struct {
 
 // turnOutcome is everything one turn produced.
 type turnOutcome struct {
-	text   string
-	calls  []openai.ToolCall
-	result session.Result
-	steps  openai.StepLog
-	capped bool
+	text      string
+	reasoning string
+	calls     []openai.ToolCall
+	result    session.Result
+	steps     openai.StepLog
+	capped    bool
 }
 
 // runTurn executes one turn and applies the output controls.
@@ -164,11 +165,13 @@ func (s *Server) runTurn(r *http.Request, plan turnPlan, prompt string, keepPart
 	}
 
 	var text strings.Builder
+	var reasoning strings.Builder
 	var steps openai.StepLog
 
 	result, err := s.manager.Prompt(r.Context(), turn, func(u acp.SessionUpdate) error {
-		piece, step := openai.FromUpdate(u)
+		piece, thought, step := openai.FromUpdate(u)
 		steps.Add(step)
+		reasoning.WriteString(thought)
 		if piece == "" {
 			return nil
 		}
@@ -181,7 +184,13 @@ func (s *Server) runTurn(r *http.Request, plan turnPlan, prompt string, keepPart
 	}
 	text.WriteString(limit.Finish())
 
-	out := turnOutcome{text: text.String(), result: result, steps: steps, capped: limit.Capped()}
+	out := turnOutcome{
+		text:      text.String(),
+		reasoning: reasoning.String(),
+		result:    result,
+		steps:     steps,
+		capped:    limit.Capped(),
+	}
 	if plan.tools {
 		// A tool call is the whole message: the envelope is consumed, leaving
 		// no prose behind.
@@ -256,7 +265,7 @@ func (s *Server) blockingTurn(w http.ResponseWriter, r *http.Request, plan turnP
 
 		out = append(out, openai.Choice{
 			Index:        i,
-			Message:      openai.NewResponseMessage(run.text, run.calls),
+			Message:      openai.NewResponseMessage(run.text, run.reasoning, run.calls),
 			FinishReason: finish,
 		})
 		totalIn += openai.EstimateTokens(plan.prompt)

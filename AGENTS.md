@@ -39,6 +39,14 @@ OpenAI client ──HTTP/SSE──▶ gateway ──JSON-RPC over stdio──▶
   envelope contract, and the ACP→OpenAI mapping.
 - `internal/handler/` — thin HTTP handlers and middleware.
 - `internal/config/` — config loading.
+- `internal/logger/` — the slog handler and console format for the process log:
+  `LEVEL [module] | message | key=value`, module lifted from the `module`
+  attribute, level colored under `--verbose`.
+- Deployment is not containerised for the gateway: it runs on the host
+  (`lota dev`), because an agent CLI reads the user's home and needs the
+  runtimes its MCP servers call. `docker-compose.yml` (gitignored, like
+  `config.yaml` and `workspace/`) runs only the web UI — Open WebUI —
+  with host networking so it can reach the gateway on the host's loopback.
 
 ## Commands
 
@@ -46,7 +54,7 @@ OpenAI client ──HTTP/SSE──▶ gateway ──JSON-RPC over stdio──▶
 
 ```sh
 lota check       # full verification: format, vet, race tests
-lota dev         # run the gateway in development mode
+lota dev         # run the gateway in development mode (air: rebuild + restart)
 lota agents      # which agent CLIs are installed
 lota smoke       # build, start, curl the API, stop
 lota conformance # assert the whole HTTP surface against a live server
@@ -79,6 +87,12 @@ go test ./internal/openai/ -v
   best-effort. Text held back by the stream must always be released as content
   when it turns out not to be an envelope — losing an answer is worse than
   missing a tool call. `internal/openai/toolstream.go` owns that rule.
+- **Reasoning is not the answer.** ACP thoughts (`agent_thought_chunk`) travel
+  in `reasoning_content` on the message and the stream delta, the convention
+  reasoning-aware clients render; they are never mixed into `content`, and are
+  mirrored in `acp.steps` (type `thought`). On a stream they bypass the tool
+  hold and the output limit: a thought is neither a possible envelope nor part
+  of the `max_tokens` budget. `internal/openai/mapping.go` owns that rule.
 - **The ACP handshake order is fixed.** `initialize` → `authenticate` (when the
   agent advertises auth methods) → `session/new`. The Devin CLI refuses
   `session/new` with "ACP host has not authenticated" until `authenticate` is

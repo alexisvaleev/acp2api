@@ -186,10 +186,16 @@ type Choice struct {
 // ResponseMessage is the assistant's reply. Content is a pointer so a tool-call
 // turn can send `"content": null`, which is what the OpenAI API does: a turn
 // either answers or asks the caller to run something, never both.
+//
+// ReasoningContent carries the agent's thoughts, in the `reasoning_content`
+// field DeepSeek popularised and clients such as Open WebUI render. It is not
+// standard OpenAI, but it is the de facto convention, and the alternative —
+// burying reasoning in the `acp` extension — means no client shows it.
 type ResponseMessage struct {
-	Role      string     `json:"role"`
-	Content   *string    `json:"content"`
-	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+	Role             string     `json:"role"`
+	Content          *string    `json:"content"`
+	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 }
 
 // ContentString returns the message content, or an empty string when the turn
@@ -201,10 +207,11 @@ func (m ResponseMessage) ContentString() string {
 	return *m.Content
 }
 
-// NewResponseMessage builds an assistant message from optional prose and calls.
-// Exactly one of the two is expected to be non-empty.
-func NewResponseMessage(content string, calls []ToolCall) ResponseMessage {
-	message := ResponseMessage{Role: "assistant", ToolCalls: calls}
+// NewResponseMessage builds an assistant message from optional prose, optional
+// reasoning, and calls. At most one of prose and calls is expected to be
+// non-empty; reasoning may accompany either.
+func NewResponseMessage(content, reasoning string, calls []ToolCall) ResponseMessage {
+	message := ResponseMessage{Role: "assistant", ReasoningContent: reasoning, ToolCalls: calls}
 	if len(calls) == 0 {
 		message.Content = &content
 	}
@@ -237,11 +244,13 @@ type ChunkChoice struct {
 	FinishReason *string `json:"finish_reason"`
 }
 
-// Delta is an incremental assistant message.
+// Delta is an incremental assistant message. ReasoningContent streams the
+// agent's thoughts ahead of the answer, mirroring ResponseMessage.
 type Delta struct {
-	Role      string          `json:"role,omitempty"`
-	Content   string          `json:"content,omitempty"`
-	ToolCalls []ToolCallDelta `json:"tool_calls,omitempty"`
+	Role             string          `json:"role,omitempty"`
+	Content          string          `json:"content,omitempty"`
+	ReasoningContent string          `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCallDelta `json:"tool_calls,omitempty"`
 }
 
 /* ---- ACP extension ---- */

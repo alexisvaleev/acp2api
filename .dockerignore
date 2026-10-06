@@ -1,0 +1,24 @@
+# Keep the build context small and keep machine-local files out of the image.
+# The config is mounted at runtime, never baked in.
+
+.git/
+.github/
+bin/
+dist/
+prod/
+workspace/
+test/
+reference/
+
+config.yaml
+config.local.*
+.env
+.env.*
+
+docker-compose*.yml
+compose*.yml
+
+Dockerfile
+.dockerignore
+*.out
+coverage.html

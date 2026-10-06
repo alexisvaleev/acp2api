@@ -57,6 +57,10 @@ disable_builtins: false
 # requests; the agent CLIs call their own APIs, and a proxy is how those calls
 # are routed — for a corporate egress, or to reach an API that is not served in
 # the host's region.
+#
+# A single url may be written as a bare string, which is shorthand for the
+# block below with only `url` set:
+#   proxy: http://proxy:3128
 proxy:
   url: ""
   # no_proxy: localhost,127.0.0.1

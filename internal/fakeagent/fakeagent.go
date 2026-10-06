@@ -8,6 +8,8 @@
 //
 //	ACP2API_FAKE_AGENT=1        required marker; runs the agent loop
 //	FAKE_AGENT_CHUNKS=3         number of agent_message_chunk updates per turn
+//	FAKE_AGENT_THOUGHT=text     emit this text as agent_thought_chunk updates
+//	                            before the answer, split by FAKE_AGENT_CHUNKS
 //	FAKE_AGENT_STOP_REASON      stop reason returned by session/prompt
 //	FAKE_AGENT_FAIL_INIT=1      answer initialize with a JSON-RPC error
 //	FAKE_AGENT_READ_PATH=/x     request fs/read_text_file during the turn

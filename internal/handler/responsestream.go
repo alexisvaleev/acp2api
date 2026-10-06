@@ -96,7 +96,7 @@ func (s *Server) streamResponse(w http.ResponseWriter, r *http.Request, plan res
 	var steps openai.StepLog
 
 	result, err := s.manager.Prompt(r.Context(), plan.turn, func(u acp.SessionUpdate) error {
-		piece, step := openai.FromUpdate(u)
+		piece, _, step := openai.FromUpdate(u)
 		steps.Add(step)
 		if piece == "" {
 			return nil
