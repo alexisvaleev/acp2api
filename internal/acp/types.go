@@ -14,6 +14,8 @@ const (
 	MethodSessionLoad      = "session/load"
 	MethodSessionPrompt    = "session/prompt"
 	MethodSessionCancel    = "session/cancel"
+	MethodSessionSetMode   = "session/set_mode"
+	MethodSessionSetConfig = "session/set_config_option"
 	MethodSessionUpdate    = "session/update"
 	MethodRequestPerm      = "session/request_permission"
 	MethodReadTextFile     = "fs/read_text_file"
@@ -188,6 +190,21 @@ type PromptResponse struct {
 // CancelNotification asks the agent to stop the current turn.
 type CancelNotification struct {
 	SessionID string `json:"sessionId"`
+}
+
+// SetConfigOptionRequest sets an agent-advertised config value, such as the
+// model. Not every agent implements it; the gateway treats a failure as
+// best-effort so an agent without config options still works.
+type SetConfigOptionRequest struct {
+	SessionID string `json:"sessionId"`
+	ConfigID  string `json:"configId"`
+	Value     string `json:"value"`
+}
+
+// SetModeRequest switches the agent's session mode (e.g. plan, build).
+type SetModeRequest struct {
+	SessionID string `json:"sessionId"`
+	ModeID    string `json:"modeId"`
 }
 
 /* ---- session updates ---- */

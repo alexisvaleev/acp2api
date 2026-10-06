@@ -11,6 +11,7 @@
 //	FAKE_AGENT_STOP_REASON      stop reason returned by session/prompt
 //	FAKE_AGENT_FAIL_INIT=1      answer initialize with a JSON-RPC error
 //	FAKE_AGENT_READ_PATH=/x     request fs/read_text_file during the turn
+//	FAKE_AGENT_WRITE_PATH=/x    request fs/write_text_file during the turn
 //	FAKE_AGENT_REQUEST_PERM=1   request session/request_permission during the turn
 //	FAKE_AGENT_EXIT_AFTER=1     exit the process right after the first turn
 package fakeagent
@@ -194,6 +195,14 @@ func (a *agent) turn(msg message) {
 
 	if path := os.Getenv("FAKE_AGENT_READ_PATH"); path != "" {
 		_, _ = a.request("fs/read_text_file", map[string]any{"sessionId": sessionID, "path": path})
+	}
+
+	if path := os.Getenv("FAKE_AGENT_WRITE_PATH"); path != "" {
+		_, _ = a.request("fs/write_text_file", map[string]any{
+			"sessionId": sessionID,
+			"path":      path,
+			"content":   os.Getenv("FAKE_AGENT_WRITE_CONTENT"),
+		})
 	}
 
 	if os.Getenv("FAKE_AGENT_REQUEST_PERM") == "1" {
