@@ -30,6 +30,10 @@ type Agent struct {
 	// authenticate `_meta.api_key`, for a headless login. Empty sends no key,
 	// which is right for an agent already logged in on this machine.
 	APIKeyEnv string
+	// AllowInteractiveAuth permits an authenticate call that may open a browser
+	// or prompt. It is off by default: a daemon must not open windows, and an
+	// agent that needs credentials should be given a key instead.
+	AllowInteractiveAuth bool
 	// ClientCapabilities overrides the default initialize capabilities.
 	// Nil means DefaultCapabilities().
 	ClientCapabilities map[string]any

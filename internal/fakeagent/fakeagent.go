@@ -23,6 +23,7 @@
 //	FAKE_AGENT_IMAGES=1         advertise image prompt support
 //	FAKE_AGENT_REQUIRE_AUTH=1   advertise an auth method and refuse session/new
 //	                            until authenticate is called
+//	FAKE_AGENT_REQUIRE_API_KEY=1 refuse authenticate unless _meta.api_key is set
 //	FAKE_AGENT_EXIT_AFTER=1     exit the process right after the first turn
 package fakeagent
 
@@ -88,6 +89,15 @@ type agent struct {
 	sessions      int
 	turns         int
 	authenticated bool
+	authMetaKeys  int
+}
+
+// AuthMetaKeys reports how many `_meta` entries the last authenticate carried,
+// which is how a test proves an API key was actually sent.
+func (a *agent) AuthMetaKeys() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.authMetaKeys
 }
 
 // isAuthenticated reports whether authenticate has been called.
@@ -174,15 +184,25 @@ func (a *agent) handleRequest(msg message) {
 		})
 	case "authenticate":
 		var p struct {
-			MethodID string `json:"methodId"`
+			MethodID string         `json:"methodId"`
+			Meta     map[string]any `json:"_meta"`
 		}
 		_ = json.Unmarshal(msg.Params, &p)
 		if p.MethodID == "" {
 			a.write(map[string]any{"jsonrpc": "2.0", "id": rawID(msg.ID), "error": map[string]any{"code": -32602, "message": "methodId is required"}})
 			return
 		}
+		if os.Getenv("FAKE_AGENT_REQUIRE_API_KEY") == "1" {
+			if key, _ := p.Meta["api_key"].(string); key == "" {
+				a.write(map[string]any{"jsonrpc": "2.0", "id": rawID(msg.ID), "error": map[string]any{
+					"code": -32000, "message": "an api_key is required in _meta",
+				}})
+				return
+			}
+		}
 		a.mu.Lock()
 		a.authenticated = true
+		a.authMetaKeys = len(p.Meta)
 		a.mu.Unlock()
 		// A real agent answers with null; the gateway must tolerate that.
 		a.write(map[string]any{"jsonrpc": "2.0", "id": rawID(msg.ID), "result": nil})

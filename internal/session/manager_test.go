@@ -180,11 +180,17 @@ func TestMissingAgentBinaryIsReported(t *testing.T) {
 	}
 }
 
-// TestAgentRequiringAuthIsAuthenticated covers the flow the Devin CLI needs:
-// initialize advertises an auth method, and session/new is refused until
-// authenticate has been called.
+// TestAgentRequiringAuthIsAuthenticated covers the handshake order the Devin CLI
+// needs: initialize advertises an auth method, and session/new is refused until
+// authenticate has been called. Interactive auth is allowed here so the call
+// actually happens; the default path is covered below.
 func TestAgentRequiringAuthIsAuthenticated(t *testing.T) {
-	m, _ := newManager(t, fakeRegistry(), map[string]string{"FAKE_AGENT_REQUIRE_AUTH": "1"})
+	registry := agent.NewRegistry(agent.Agent{
+		ID:                   "fake",
+		Command:              os.Args[0],
+		AllowInteractiveAuth: true,
+	})
+	m, _ := newManager(t, registry, map[string]string{"FAKE_AGENT_REQUIRE_AUTH": "1"})
 
 	if _, err := m.Prompt(context.Background(), session.Request{Model: "fake", Prompt: "hi"}, noop); err != nil {
 		t.Fatalf("the gateway must authenticate before opening a session: %v", err)
@@ -205,5 +211,58 @@ func TestMissingAPIKeyEnvIsReportedClearly(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "ACP2API_TEST_ABSENT_KEY") {
 		t.Fatalf("error should name the missing variable: %v", err)
+	}
+}
+
+// TestConfiguredAPIKeyIsSentToTheAgent is the Devin case: the agent ignores its
+// own on-disk login and wants the key in authenticate's _meta.
+func TestConfiguredAPIKeyIsSentToTheAgent(t *testing.T) {
+	t.Setenv("ACP2API_TEST_KEY", "secret-key-value")
+
+	registry := agent.NewRegistry(agent.Agent{
+		ID:        "fake",
+		Command:   os.Args[0],
+		APIKeyEnv: "ACP2API_TEST_KEY",
+	})
+	m, _ := newManager(t, registry, map[string]string{
+		"FAKE_AGENT_REQUIRE_AUTH":    "1",
+		"FAKE_AGENT_REQUIRE_API_KEY": "1",
+	})
+
+	if _, err := m.Prompt(context.Background(), session.Request{Model: "fake", Prompt: "hi"}, noop); err != nil {
+		t.Fatalf("the configured key should have satisfied the agent: %v", err)
+	}
+}
+
+// TestNoKeyMeansNoInteractiveAuth is the behaviour a daemon needs: without a
+// key the gateway must not start an interactive flow, so the agent's own error
+// surfaces instead of a browser window.
+func TestNoKeyMeansNoInteractiveAuth(t *testing.T) {
+	registry := agent.NewRegistry(agent.Agent{ID: "fake", Command: os.Args[0]})
+	m, _ := newManager(t, registry, map[string]string{
+		"FAKE_AGENT_REQUIRE_AUTH":    "1",
+		"FAKE_AGENT_REQUIRE_API_KEY": "1",
+	})
+
+	_, err := m.Prompt(context.Background(), session.Request{Model: "fake", Prompt: "hi"}, noop)
+	if err == nil {
+		t.Fatal("expected the agent's own authentication error to surface")
+	}
+	if !strings.Contains(err.Error(), "not authenticated") {
+		t.Fatalf("the agent's error should reach the caller, got: %v", err)
+	}
+}
+
+// TestInteractiveAuthIsOptIn covers an operator explicitly accepting a prompt.
+func TestInteractiveAuthIsOptIn(t *testing.T) {
+	registry := agent.NewRegistry(agent.Agent{
+		ID:                   "fake",
+		Command:              os.Args[0],
+		AllowInteractiveAuth: true,
+	})
+	m, _ := newManager(t, registry, map[string]string{"FAKE_AGENT_REQUIRE_AUTH": "1"})
+
+	if _, err := m.Prompt(context.Background(), session.Request{Model: "fake", Prompt: "hi"}, noop); err != nil {
+		t.Fatalf("interactive auth was allowed, so the session should open: %v", err)
 	}
 }

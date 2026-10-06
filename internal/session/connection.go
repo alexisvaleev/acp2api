@@ -136,37 +136,55 @@ func (m *Manager) startConnection(a agent.Agent, workspace string) (*connection,
 
 // authenticate selects an auth method when the agent advertises any. An agent
 // that advertises none needs no call, which is the common case.
+//
+// The Devin CLI is the reason this is careful. Under ACP it refuses to use its
+// own on-disk login — "ACP host is the sole source of credentials" — and its
+// only advertised method, devin-browser, starts a browser PKCE flow. Calling
+// that from a daemon opens a login window on every agent spawn, so the default
+// is to send a key when one is configured and otherwise not to call at all:
+// the agent's own error then says exactly what is missing.
 func (c *connection) authenticate(ctx context.Context, cl *acp.Client, a agent.Agent, initRaw json.RawMessage) error {
 	var init acp.InitializeResponse
 	if err := json.Unmarshal(initRaw, &init); err != nil || len(init.AuthMethods) == 0 {
 		return nil
 	}
 
-	methodID := a.AuthMethod
-	if methodID == "" {
-		methodID = init.AuthMethods[0].ID
-	}
+	request := acp.AuthenticateRequest{MethodID: authMethodID(a, init)}
 
-	request := acp.AuthenticateRequest{MethodID: methodID}
 	if a.APIKeyEnv != "" {
 		key := os.Getenv(a.APIKeyEnv)
 		if key == "" {
 			return fmt.Errorf(
 				"session: agent %q requires authentication and %s is not set; "+
-					"run the agent's own login, or set the variable",
+					"put the agent's API key in that variable",
 				a.ID, a.APIKeyEnv)
 		}
 		request.Meta = map[string]any{"api_key": key}
+	} else if !a.AllowInteractiveAuth {
+		slog.Warn("session: skipping authenticate because no key is configured",
+			"agent", a.ID,
+			"advertised_method", request.MethodID,
+			"hint", "set api_key_env to the variable holding the agent's key, "+
+				"or allow_interactive_auth if a browser prompt is acceptable")
+		return nil
 	}
 
 	if _, err := cl.Request(ctx, acp.MethodAuthenticate, request); err != nil {
-		return fmt.Errorf(
-			"session: authenticate agent %q with method %q: %w "+
-				"(if the agent needs a login, run its own login command first)",
-			a.ID, methodID, err)
+		return fmt.Errorf("session: authenticate agent %q with method %q: %w",
+			a.ID, request.MethodID, err)
 	}
-	slog.Debug("session: authenticated", "agent", a.ID, "method", methodID)
+	slog.Debug("session: authenticated",
+		"agent", a.ID, "method", request.MethodID, "with_key", request.Meta != nil)
 	return nil
+}
+
+// authMethodID picks the advertised method to use: the configured override, or
+// the first one advertised.
+func authMethodID(a agent.Agent, init acp.InitializeResponse) string {
+	if a.AuthMethod != "" {
+		return a.AuthMethod
+	}
+	return init.AuthMethods[0].ID
 }
 
 // parseCapabilities reads the agent's prompt capabilities. An agent that says
