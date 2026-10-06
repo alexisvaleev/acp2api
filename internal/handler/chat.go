@@ -129,7 +129,7 @@ func (s *Server) blockingTurn(w http.ResponseWriter, r *http.Request, plan turnP
 		// A tool call is the whole message: the envelope is consumed, leaving
 		// no prose behind.
 		if parsed := openai.ParseToolCalls(content); len(parsed) > 0 {
-			calls, content = parsed, ""
+			calls, content = openai.LimitCalls(parsed, plan.req.ParallelToolCalls), ""
 		}
 	}
 
@@ -221,6 +221,7 @@ func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, plan turnPla
 
 	// Settle the hold: what is left is either the answer or a tool call.
 	rest, calls := hold.Finish()
+	calls = openai.LimitCalls(calls, plan.req.ParallelToolCalls)
 	text.WriteString(rest)
 	sendText(rest)
 

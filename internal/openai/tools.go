@@ -60,6 +60,17 @@ func ToolCallDeltas(calls []ToolCall) []ToolCallDelta {
 	return out
 }
 
+// LimitCalls applies parallel_tool_calls. A caller that forbade parallel calls
+// cannot be expected to handle two, so the list is truncated to the first.
+// The agent decides how many calls to emit; the gateway decides how many to
+// report.
+func LimitCalls(calls []ToolCall, parallel *bool) []ToolCall {
+	if parallel == nil || *parallel || len(calls) <= 1 {
+		return calls
+	}
+	return calls[:1]
+}
+
 // ToolChoice is the OpenAI tool_choice value: a mode, or a named function.
 type ToolChoice struct {
 	Mode     string

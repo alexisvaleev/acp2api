@@ -84,6 +84,27 @@ type ChatCompletionRequest struct {
 	PresencePenalty  *float64       `json:"presence_penalty,omitempty"`
 	FrequencyPenalty *float64       `json:"frequency_penalty,omitempty"`
 	LogitBias        map[string]int `json:"logit_bias,omitempty"`
+
+	// ParallelToolCalls is honoured: false truncates a multi-call envelope to
+	// its first call, because a caller that forbade parallel calls cannot be
+	// expected to handle two.
+	ParallelToolCalls *bool `json:"parallel_tool_calls,omitempty"`
+
+	// Parameters that steer the agent but cannot change the response shape.
+	// They are accepted and reported.
+	ReasoningEffort *string         `json:"reasoning_effort,omitempty"`
+	Verbosity       *string         `json:"verbosity,omitempty"`
+	ServiceTier     *string         `json:"service_tier,omitempty"`
+	Prediction      json.RawMessage `json:"prediction,omitempty"`
+	Store           *bool           `json:"store,omitempty"`
+	Metadata        json.RawMessage `json:"metadata,omitempty"`
+
+	// Modalities must be text-only: this gateway cannot return audio.
+	Modalities []string `json:"modalities,omitempty"`
+	// Audio requests spoken output, which an ACP agent cannot produce.
+	Audio json.RawMessage `json:"audio,omitempty"`
+	// WebSearchOptions requests a built-in tool with no ACP equivalent.
+	WebSearchOptions json.RawMessage `json:"web_search_options,omitempty"`
 }
 
 // StreamOptions mirrors the OpenAI field.

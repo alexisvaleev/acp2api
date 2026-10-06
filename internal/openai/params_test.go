@@ -29,6 +29,9 @@ func TestUnsupportedParametersAreRejected(t *testing.T) {
 		"logprobs":              `{"logprobs":true}`,
 		"top_logprobs":          `{"top_logprobs":5}`,
 		"n":                     `{"n":3}`,
+		"audio":                 `{"audio":{"voice":"alloy","format":"wav"}}`,
+		"web_search_options":    `{"web_search_options":{}}`,
+		"modalities":            `{"modalities":["text","audio"]}`,
 	}
 
 	for want, body := range cases {
@@ -53,7 +56,10 @@ func TestUnsupportedParametersAreRejected(t *testing.T) {
 }
 
 func TestIgnoredParametersAreReported(t *testing.T) {
-	cases := []string{"temperature", "top_p", "seed", "presence_penalty", "frequency_penalty", "logit_bias"}
+	cases := []string{
+		"temperature", "top_p", "seed", "presence_penalty", "frequency_penalty", "logit_bias",
+		"reasoning_effort", "verbosity", "service_tier", "prediction", "store", "metadata",
+	}
 
 	for _, name := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -63,6 +69,12 @@ func TestIgnoredParametersAreReported(t *testing.T) {
 				body[name] = map[string]int{"123": 5}
 			case "seed":
 				body[name] = 7
+			case "prediction", "metadata":
+				body[name] = map[string]any{"type": "content", "content": "x"}
+			case "store":
+				body[name] = true
+			case "reasoning_effort", "verbosity", "service_tier":
+				body[name] = "medium"
 			default:
 				body[name] = 0.5
 			}
@@ -79,6 +91,58 @@ func TestIgnoredParametersAreReported(t *testing.T) {
 				t.Fatalf("ignored = %v, want [%s]", ignored, name)
 			}
 		})
+	}
+}
+
+func TestStrictToolsAreReportedAsIgnored(t *testing.T) {
+	body := `{
+		"model":"devin",
+		"messages":[{"role":"user","content":"hi"}],
+		"tools":[{"type":"function","function":{"name":"f","strict":true,"parameters":{"type":"object"}}}]
+	}`
+
+	ignored, err := ValidateRequest(decode(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ignored) != 1 || ignored[0] != ParamToolStrict {
+		t.Fatalf("ignored = %v, want [%s]", ignored, ParamToolStrict)
+	}
+}
+
+func TestNonStrictToolsAreNotReported(t *testing.T) {
+	body := `{
+		"model":"devin",
+		"messages":[{"role":"user","content":"hi"}],
+		"tools":[
+			{"type":"function","function":{"name":"a"}},
+			{"type":"function","function":{"name":"b","strict":false}}
+		]
+	}`
+
+	ignored, err := ValidateRequest(decode(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ignored) != 0 {
+		t.Fatalf("ignored = %v, want none", ignored)
+	}
+}
+
+func TestParallelToolCallsAndTextModalitiesAreSupported(t *testing.T) {
+	for _, body := range []string{
+		`{"parallel_tool_calls":false}`,
+		`{"parallel_tool_calls":true}`,
+		`{"modalities":["text"]}`,
+	} {
+		req := decode(t, `{"model":"devin","messages":[{"role":"user","content":"hi"}],`+strings.TrimPrefix(body, "{"))
+		ignored, err := ValidateRequest(req)
+		if err != nil {
+			t.Fatalf("%s: %v", body, err)
+		}
+		if len(ignored) != 0 {
+			t.Fatalf("%s: ignored = %v, want none", body, ignored)
+		}
 	}
 }
 

@@ -58,12 +58,17 @@ func (e *ParamError) Error() string {
 // the value-dependent checks cannot drift apart.
 const (
 	reasonSampling   = "the agent owns its own sampling"
+	reasonSteering   = "the agent does not expose this control, and dropping it cannot change the shape of the response"
 	reasonLogprobs   = "an ACP agent does not expose token probabilities, and synthesising them would be fabrication"
 	reasonChoices    = "multiple choices are not yet supported; they arrive in stage 5"
 	reasonLegacyFns  = "the legacy functions API is not translated to ACP; use tools instead"
 	reasonStructured = "structured outputs are not yet enforced; they arrive in stage 4"
 	reasonStop       = "stop sequences are not yet applied to agent output; they arrive in stage 4"
 	reasonLength     = "output length is not yet capped; it arrives in stage 4"
+	reasonAudio      = "an ACP agent produces text, not audio"
+	reasonWebSearch  = "built-in server-side tools have no ACP equivalent; declare your own with tools"
+	reasonModalities = "only text output is supported; an ACP agent cannot produce audio"
+	reasonToolStrict = "strict schema enforcement is not applied; the schema is passed to the agent as a description"
 )
 
 // paramPolicy is the single source of truth for how every policed parameter is
@@ -72,15 +77,16 @@ const (
 // compatibility with new OpenAI parameters, which is the worse trade.
 var paramPolicy = map[string]ParamRule{
 	/* Supported: honoured by the gateway. */
-	"model":           {Name: "model", Disposition: Supported},
-	"messages":        {Name: "messages", Disposition: Supported},
-	"stream":          {Name: "stream", Disposition: Supported},
-	"stream_options":  {Name: "stream_options", Disposition: Supported},
-	"conversation_id": {Name: "conversation_id", Disposition: Supported},
-	"user":            {Name: "user", Disposition: Supported},
-	"workspace":       {Name: "workspace", Disposition: Supported},
-	"tools":           {Name: "tools", Disposition: Supported},
-	"tool_choice":     {Name: "tool_choice", Disposition: Supported},
+	"model":               {Name: "model", Disposition: Supported},
+	"messages":            {Name: "messages", Disposition: Supported},
+	"stream":              {Name: "stream", Disposition: Supported},
+	"stream_options":      {Name: "stream_options", Disposition: Supported},
+	"conversation_id":     {Name: "conversation_id", Disposition: Supported},
+	"user":                {Name: "user", Disposition: Supported},
+	"workspace":           {Name: "workspace", Disposition: Supported},
+	"tools":               {Name: "tools", Disposition: Supported},
+	"tool_choice":         {Name: "tool_choice", Disposition: Supported},
+	"parallel_tool_calls": {Name: "parallel_tool_calls", Disposition: Supported},
 
 	/* Accepted and reported: the agent owns its own sampling. */
 	"temperature":       {Name: "temperature", Disposition: Ignored, Reason: reasonSampling},
@@ -89,6 +95,15 @@ var paramPolicy = map[string]ParamRule{
 	"presence_penalty":  {Name: "presence_penalty", Disposition: Ignored, Reason: reasonSampling},
 	"frequency_penalty": {Name: "frequency_penalty", Disposition: Ignored, Reason: reasonSampling},
 	"logit_bias":        {Name: "logit_bias", Disposition: Ignored, Reason: reasonSampling},
+
+	/* Accepted and reported: they steer the agent but cannot change the shape
+	   of the response, so a caller cannot detect that they were dropped. */
+	"reasoning_effort": {Name: "reasoning_effort", Disposition: Ignored, Reason: reasonSteering},
+	"verbosity":        {Name: "verbosity", Disposition: Ignored, Reason: reasonSteering},
+	"service_tier":     {Name: "service_tier", Disposition: Ignored, Reason: reasonSteering},
+	"prediction":       {Name: "prediction", Disposition: Ignored, Reason: reasonSteering},
+	"store":            {Name: "store", Disposition: Ignored, Reason: reasonSteering},
+	"metadata":         {Name: "metadata", Disposition: Ignored, Reason: reasonSteering},
 
 	/* Unsupported: ignoring these would make the response violate the request. */
 	"functions":             {Name: "functions", Disposition: Unsupported, Reason: reasonLegacyFns},
@@ -99,9 +114,29 @@ var paramPolicy = map[string]ParamRule{
 	"max_completion_tokens": {Name: "max_completion_tokens", Disposition: Unsupported, Reason: reasonLength},
 	"logprobs":              {Name: "logprobs", Disposition: Unsupported, Reason: reasonLogprobs},
 	"top_logprobs":          {Name: "top_logprobs", Disposition: Unsupported, Reason: reasonLogprobs},
+	"audio":                 {Name: "audio", Disposition: Unsupported, Reason: reasonAudio},
+	"web_search_options":    {Name: "web_search_options", Disposition: Unsupported, Reason: reasonWebSearch},
 	"n": {
 		Name: "n", Disposition: Unsupported, Reason: reasonChoices, Check: checkN,
 	},
+	"modalities": {
+		Name: "modalities", Disposition: Supported, Check: checkModalities,
+	},
+}
+
+// checkModalities accepts text-only output and rejects a request for anything
+// an agent cannot produce.
+func checkModalities(value any) (Disposition, string) {
+	modalities, ok := value.([]string)
+	if !ok {
+		return Unsupported, reasonModalities
+	}
+	for _, modality := range modalities {
+		if modality != "text" {
+			return Unsupported, reasonModalities
+		}
+	}
+	return Supported, ""
 }
 
 // checkN allows the default single choice and rejects a request for more.
@@ -111,6 +146,11 @@ func checkN(value any) (Disposition, string) {
 	}
 	return Unsupported, reasonChoices
 }
+
+// ParamToolStrict names the nested setting reported when a caller asks for
+// strict schema enforcement on a tool. It is not a top-level parameter, so it
+// is handled separately from the policy table.
+const ParamToolStrict = "tools[].function.strict"
 
 // ValidateRequest applies the parameter policy to a decoded request.
 //
@@ -135,8 +175,27 @@ func ValidateRequest(req *ChatCompletionRequest) (ignored []string, bad *ParamEr
 			}
 		}
 	})
+
+	// A tool may ask for strict schema enforcement. The gateway passes the
+	// schema to the agent as a description and does not validate the arguments
+	// against it, so the caller has to be told.
+	if requestsStrictTools(req.Tools) {
+		ignored = append(ignored, ParamToolStrict)
+	}
+
 	sort.Strings(ignored)
 	return ignored, bad
+}
+
+// requestsStrictTools reports whether any declared tool asked for strict
+// schema enforcement.
+func requestsStrictTools(tools []Tool) bool {
+	for _, tool := range tools {
+		if tool.Function.Strict != nil && *tool.Function.Strict {
+			return true
+		}
+	}
+	return false
 }
 
 // PolicyNames returns every parameter the policy covers, sorted. Tests use it

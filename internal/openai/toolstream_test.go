@@ -87,6 +87,51 @@ func TestParseToolCalls(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("parallel calls keep their order", func(t *testing.T) {
+		envelope := `{"tool_calls":[` +
+			`{"id":"call_a","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}},` +
+			`{"id":"call_b","type":"function","function":{"name":"get_time","arguments":"{\"zone\":\"CET\"}"}}]}`
+		calls := ParseToolCalls(envelope)
+		if len(calls) != 2 {
+			t.Fatalf("got %d calls, want 2", len(calls))
+		}
+		if calls[0].Function.Name != "get_weather" || calls[1].Function.Name != "get_time" {
+			t.Fatalf("order lost: %+v", calls)
+		}
+
+		deltas := ToolCallDeltas(calls)
+		if len(deltas) != 2 || deltas[0].Index != 0 || deltas[1].Index != 1 {
+			t.Fatalf("deltas = %+v, want indices 0 and 1", deltas)
+		}
+	})
+}
+
+func TestLimitCallsHonoursParallelToolCalls(t *testing.T) {
+	calls := []ToolCall{
+		{ID: "a", Function: FunctionCall{Name: "first"}},
+		{ID: "b", Function: FunctionCall{Name: "second"}},
+	}
+
+	no := false
+	limited := LimitCalls(calls, &no)
+	if len(limited) != 1 || limited[0].Function.Name != "first" {
+		t.Fatalf("parallel_tool_calls=false must keep only the first call, got %+v", limited)
+	}
+
+	yes := true
+	if got := LimitCalls(calls, &yes); len(got) != 2 {
+		t.Fatalf("parallel_tool_calls=true must keep both, got %+v", got)
+	}
+
+	if got := LimitCalls(calls, nil); len(got) != 2 {
+		t.Fatalf("an absent setting must keep both, got %+v", got)
+	}
+
+	single := []ToolCall{{ID: "a", Function: FunctionCall{Name: "only"}}}
+	if got := LimitCalls(single, &no); len(got) != 1 {
+		t.Fatalf("a single call must survive, got %+v", got)
+	}
 }
 
 func TestClassifyEnvelope(t *testing.T) {
