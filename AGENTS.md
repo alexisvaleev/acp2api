@@ -39,16 +39,29 @@ OpenAI client ──HTTP/SSE──▶ gateway ──JSON-RPC over stdio──▶
 
 ## Commands
 
-```bash
-# Build and test (the full check)
-go build ./... && go vet ./... && go test ./...
+`lota.yml` wraps everything; prefer it over raw commands.
 
-# Run against a local agent
-go run ./cmd/acp2api --config ./config.yaml
+```sh
+lota check       # full verification: format, vet, race tests
+lota dev         # run the gateway in development mode
+lota agents      # which agent CLIs are installed
+lota smoke       # build, start, curl the API, stop
+lota build       # produce bin/acp2api
+```
+
+Raw equivalents, for reference:
+
+```bash
+go build ./... && go vet ./... && go test ./... -race
 
 # Run a single package's tests
 go test ./internal/openai/ -v
 ```
+
+> When writing a `lota.yml` script, remember Lota interpolates `$name`: a shell
+> variable is only recognised as local when the assignment starts a line (or
+> follows `;`), and loop variables only in `for`/`select`. `if x=...` is not
+> recognised and fails with "variable 'x' is required".
 
 ## Non-negotiables
 

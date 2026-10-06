@@ -15,7 +15,37 @@ OpenAI client ──HTTP/SSE──▶ acp2api ──JSON-RPC over stdio──▶
 ACP connects *tools to tools* (editor ↔ agent). Most web applications, scripts,
 and SDKs speak HTTP and expect an OpenAI-shaped API. This is the converter.
 
-## Quick start
+## Running it
+
+The dev commands live in `lota.yml`:
+
+```sh
+lota agents      # which agent CLIs are installed on this machine
+lota dev         # run the gateway with the race-free dev token, verbose
+lota smoke       # build, start, curl the API, stop
+lota check       # format, vet, race tests
+```
+
+`lota dev` takes flags:
+
+```sh
+lota dev -w ~/code/some-repo          # workspace the agents operate in
+lota dev --addr 127.0.0.1:9000
+lota dev -p deny                      # reject every permission request
+```
+
+Without `lota`, the binary is ordinary:
+
+```sh
+go build -o bin/acp2api ./cmd/acp2api
+ACP2API_TOKEN=dev-token ./bin/acp2api --workspace ~/code/some-repo --verbose
+```
+
+Flags: `--config`, `--addr`, `--workspace`, `--permission`, `--verbose`,
+`--version`. Environment: `ACP2API_ADDR`, `ACP2API_TOKEN`, `ACP2API_WORKSPACE`,
+`ACP2API_PERMISSION`.
+
+### Quick start
 
 ```sh
 go build -o bin/acp2api ./cmd/acp2api

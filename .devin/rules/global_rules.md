@@ -75,10 +75,14 @@ Do not split just to hit a number. Group by cohesive responsibility.
 
 ## Verification before committing
 
-```bash
-cd /home/quonaro/CascadeProjects/my/acp2api
-go build ./... && go vet ./... && go test ./...
+```sh
+lota check
 ```
+
+That runs `gofmt -l` (failing on any unformatted file), `go vet ./...`, and
+`go test ./... -race -count=1`. `lota.yml` is the source of truth for the dev
+commands; `lota smoke` additionally builds the binary and exercises the live API
+with curl.
 
 ## Commits
 

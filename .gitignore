@@ -9,6 +9,8 @@
 # Local runtime state
 /config.yaml
 /config.local.yaml
+/config.json
+/config.local.json
 /.env
 /workspace/
 
