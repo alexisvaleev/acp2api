@@ -34,6 +34,16 @@ type connection struct {
 	// same states, giving a conversation a stable session across calls.
 	conversations map[string]*state
 	lastUsed      time.Time
+
+	// capabilities is what the agent reported during initialize.
+	capabilities connectionCapabilities
+}
+
+// connectionCapabilities is the part of the agent's initialize result the
+// gateway gates behaviour on.
+type connectionCapabilities struct {
+	// Images reports whether the agent accepts image prompt content.
+	Images bool
 }
 
 // connection returns the live connection for an agent and workspace, starting
@@ -99,17 +109,32 @@ func (m *Manager) startConnection(a agent.Agent, workspace string) (*connection,
 
 	initCtx, cancel := context.WithTimeout(m.ctx, m.opts.RequestTimeout)
 	defer cancel()
-	if _, err := cl.Request(initCtx, acp.MethodInitialize, acp.InitializeRequest{
+	initRaw, err := cl.Request(initCtx, acp.MethodInitialize, acp.InitializeRequest{
 		ProtocolVersion:    acp.ProtocolVersion,
 		ClientInfo:         acp.Implementation{Name: version.Name, Version: version.Version},
 		ClientCapabilities: a.Capabilities(),
-	}); err != nil {
+	})
+	if err != nil {
 		_ = cl.Close()
 		return nil, fmt.Errorf("session: initialize agent %q: %w", a.ID, err)
 	}
+	c.capabilities = parseCapabilities(initRaw)
 
-	slog.Info("session: agent ready", "agent", a.ID, "pid", cl.PID(), "workspace", workspace)
+	slog.Info("session: agent ready",
+		"agent", a.ID, "pid", cl.PID(), "workspace", workspace, "images", c.capabilities.Images)
 	return c, nil
+}
+
+// parseCapabilities reads the agent's prompt capabilities. An agent that says
+// nothing is treated as text-only, which is the safe default: sending an image
+// to an agent that cannot read it wastes a turn and answers blind.
+func parseCapabilities(raw json.RawMessage) connectionCapabilities {
+	var init acp.InitializeResponse
+	if err := json.Unmarshal(raw, &init); err != nil {
+		return connectionCapabilities{}
+	}
+	supported, _ := init.AgentCapabilities.PromptCapabilities["image"].(bool)
+	return connectionCapabilities{Images: supported}
 }
 
 // onRequest routes an agent→client request to the owning session's handler.

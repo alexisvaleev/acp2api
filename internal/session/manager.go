@@ -55,6 +55,9 @@ type Request struct {
 	Workspace string
 	// Prompt is the user's message for this turn.
 	Prompt string
+	// Parts, when non-empty, replaces Prompt with structured content blocks.
+	// That is how image prompts reach the agent.
+	Parts []acp.ContentBlock
 }
 
 // Result describes a completed turn.
@@ -136,6 +139,9 @@ func (m *Manager) Resolve(modelID string) (agent.Agent, string, error) {
 	return m.registry.Resolve(modelID)
 }
 
+// ErrImagesUnsupported reports an agent that did not advertise image prompts.
+var ErrImagesUnsupported = errors.New("session: the agent does not accept image prompts")
+
 // Prompt resolves the agent, ensures a connection and a session, and runs one turn.
 func (m *Manager) Prompt(ctx context.Context, req Request, onUpdate func(acp.SessionUpdate) error) (Result, error) {
 	a, model, err := m.registry.Resolve(req.Model)
@@ -154,12 +160,15 @@ func (m *Manager) Prompt(ctx context.Context, req Request, onUpdate func(acp.Ses
 	if err != nil {
 		return Result{}, err
 	}
+	if hasImages(req.Parts) && !conn.capabilities.Images {
+		return Result{}, ErrImagesUnsupported
+	}
 	st, err := conn.session(ctx, req.ConversationID, model)
 	if err != nil {
 		return Result{}, err
 	}
 
-	stop, err := st.run(ctx, req.Prompt, onUpdate)
+	stop, err := st.run(ctx, req, onUpdate)
 	if err != nil {
 		return Result{}, err
 	}
@@ -169,6 +178,16 @@ func (m *Manager) Prompt(ctx context.Context, req Request, onUpdate func(acp.Ses
 		SessionID:      st.id,
 		StopReason:     stop,
 	}, nil
+}
+
+// hasImages reports whether any part is an image block.
+func hasImages(parts []acp.ContentBlock) bool {
+	for _, part := range parts {
+		if part.Type == "image" {
+			return true
+		}
+	}
+	return false
 }
 
 // keyLock returns the mutex guarding one connection key, creating it on demand.

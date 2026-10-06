@@ -74,16 +74,37 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	format, err := openai.ParseResponseFormat(req.ResponseFormat)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest, "invalid_response_format",
+			err.Error(), "response_format")
+		return
+	}
+
 	prompt, err := openai.BuildTurn(req.Messages, conversationID != "", req.Tools, choice)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest, "invalid_messages", err.Error(), "messages")
 		return
 	}
 
+	images, err := openai.ImageParts(req.Messages)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest,
+			openai.CodeUnsupportedParameter, err.Error(), openai.ParamImageURL)
+		return
+	}
+
+	// The output format is prompt engineering, like the tool contract: ACP has
+	// no schema negotiation, so the shape is requested and then verified.
+	if instruction := format.Instruction(); instruction != "" {
+		prompt = instruction + "\n" + prompt
+	}
+
 	plan := turnPlan{
 		req:     req,
 		prompt:  prompt,
 		ignored: ignored,
+		format:  format,
 		// Caller tools are in play only when some were declared and the choice
 		// does not forbid them. Only then can an agent message be an envelope.
 		tools: len(req.Tools) > 0 && choice.UsesCallerTools(),
@@ -92,6 +113,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			ConversationID: conversationID,
 			Workspace:      req.Workspace,
 			Prompt:         prompt,
+			Parts:          contentParts(prompt, images),
 		},
 	}
 
@@ -108,23 +130,41 @@ type turnPlan struct {
 	turn    session.Request
 	prompt  string
 	ignored []string
+	format  openai.ResponseFormat
 	// tools reports whether the caller declared tools, so an agent message may
 	// be a tool-call envelope rather than prose.
 	tools bool
 }
 
-// blockingTurn runs the turn and returns one complete completion.
-func (s *Server) blockingTurn(w http.ResponseWriter, r *http.Request, plan turnPlan) {
+// turnOutcome is everything one turn produced.
+type turnOutcome struct {
+	text   string
+	calls  []openai.ToolCall
+	result session.Result
+	steps  openai.StepLog
+	capped bool
+}
+
+// runTurn executes one turn and applies the output controls.
+//
+// keepParts is false for a retry: the correction is text, and the agent already
+// holds the image in the session.
+func (s *Server) runTurn(r *http.Request, plan turnPlan, prompt string, keepParts bool) (turnOutcome, error) {
 	limit, err := openai.NewTextLimit(plan.req.Stop, plan.req.EffectiveMaxTokens())
 	if err != nil {
-		writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest, "invalid_stop", err.Error(), "stop")
-		return
+		return turnOutcome{}, err
+	}
+
+	turn := plan.turn
+	turn.Prompt = prompt
+	if !keepParts {
+		turn.Parts = nil
 	}
 
 	var text strings.Builder
 	var steps openai.StepLog
 
-	result, err := s.manager.Prompt(r.Context(), plan.turn, func(u acp.SessionUpdate) error {
+	result, err := s.manager.Prompt(r.Context(), turn, func(u acp.SessionUpdate) error {
 		piece, step := openai.FromUpdate(u)
 		steps.Add(step)
 		if piece == "" {
@@ -135,23 +175,65 @@ func (s *Server) blockingTurn(w http.ResponseWriter, r *http.Request, plan turnP
 		return nil
 	})
 	if err != nil {
-		s.writeAgentError(w, err)
-		return
+		return turnOutcome{}, err
 	}
 	text.WriteString(limit.Finish())
 
-	content := text.String()
-	var calls []openai.ToolCall
+	out := turnOutcome{text: text.String(), result: result, steps: steps, capped: limit.Capped()}
 	if plan.tools {
 		// A tool call is the whole message: the envelope is consumed, leaving
 		// no prose behind.
-		if parsed := openai.ParseToolCalls(content); len(parsed) > 0 {
-			calls, content = openai.LimitCalls(parsed, plan.req.ParallelToolCalls), ""
+		if parsed := openai.ParseToolCalls(out.text); len(parsed) > 0 {
+			out.calls = openai.LimitCalls(parsed, plan.req.ParallelToolCalls)
+			out.text = ""
+		}
+	}
+	return out, nil
+}
+
+// enforceFormat validates a reply against response_format, retrying once with a
+// correction before giving up.
+func (s *Server) enforceFormat(r *http.Request, plan turnPlan, out turnOutcome) (turnOutcome, error) {
+	canonical, err := plan.format.Validate(out.text)
+	if err == nil {
+		out.text = string(canonical)
+		return out, nil
+	}
+
+	retry, retryErr := s.runTurn(r, plan, plan.format.Correction(err.Error()), false)
+	if retryErr != nil {
+		return out, retryErr
+	}
+	canonical, err = plan.format.Validate(retry.text)
+	if err != nil {
+		return out, fmt.Errorf("the agent did not produce valid JSON after one retry: %w", err)
+	}
+	retry.text = string(canonical)
+	return retry, nil
+}
+
+// blockingTurn runs the turn and returns one complete completion.
+func (s *Server) blockingTurn(w http.ResponseWriter, r *http.Request, plan turnPlan) {
+	out, err := s.runTurn(r, plan, plan.turn.Prompt, true)
+	if err != nil {
+		s.writeAgentError(w, err)
+		return
+	}
+
+	if plan.format.Active() && len(out.calls) == 0 {
+		out, err = s.enforceFormat(r, plan, out)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest,
+				"invalid_response_format", err.Error(), "response_format")
+			return
 		}
 	}
 
-	finish := openai.FinishReason(result.StopReason)
-	if limit.Capped() {
+	content := out.text
+	calls := out.calls
+
+	finish := openai.FinishReason(out.result.StopReason)
+	if out.capped {
 		finish = openai.FinishLength
 	}
 	if len(calls) > 0 {
@@ -169,7 +251,7 @@ func (s *Server) blockingTurn(w http.ResponseWriter, r *http.Request, plan turnP
 			FinishReason: finish,
 		}},
 		Usage: estimateUsage(plan.prompt, content),
-		ACP:   acpMeta(result, steps, plan.ignored),
+		ACP:   acpMeta(out.result, out.steps, plan.ignored),
 	})
 }
 
@@ -221,6 +303,11 @@ func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, plan turnPla
 	var steps openai.StepLog
 	hold := openai.NewToolStream(plan.tools)
 
+	// A structured output has to be verified before it is delivered, so the
+	// answer is buffered rather than streamed. Streaming it and then reporting
+	// it as invalid would leave the caller with unusable text.
+	bufferOnly := plan.format.Active()
+
 	result, err := s.manager.Prompt(r.Context(), plan.turn, func(u acp.SessionUpdate) error {
 		piece, step := openai.FromUpdate(u)
 		steps.Add(step)
@@ -236,7 +323,9 @@ func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, plan turnPla
 		allowed, _ := limit.Push(emit)
 		if allowed != "" {
 			text.WriteString(allowed)
-			sendText(allowed)
+			if !bufferOnly {
+				sendText(allowed)
+			}
 		}
 		return nil
 	})
@@ -260,16 +349,46 @@ func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, plan turnPla
 	if rest != "" {
 		if allowed, _ := limit.Push(rest); allowed != "" {
 			text.WriteString(allowed)
-			sendText(allowed)
+			if !bufferOnly {
+				sendText(allowed)
+			}
 		}
 	}
 	if tail := limit.Finish(); tail != "" {
 		text.WriteString(tail)
-		sendText(tail)
+		if !bufferOnly {
+			sendText(tail)
+		}
+	}
+
+	capped := limit.Capped()
+
+	// A structured answer is verified here, and retried once if it is wrong.
+	if bufferOnly && len(calls) == 0 {
+		out, formatErr := s.enforceFormat(r, plan, turnOutcome{
+			text: text.String(), result: result, steps: steps, capped: capped,
+		})
+		if formatErr != nil {
+			send(openai.ErrorResponse{Error: openai.ErrorBody{
+				Message: formatErr.Error(),
+				Type:    openai.ErrTypeInvalidRequest,
+				Code:    "invalid_response_format",
+				Param:   "response_format",
+			}})
+			writeSSEDone(w)
+			flusher.Flush()
+			return
+		}
+		text.Reset()
+		text.WriteString(out.text)
+		result = out.result
+		steps = out.steps
+		capped = out.capped
+		sendText(out.text)
 	}
 
 	finish := openai.FinishReason(result.StopReason)
-	if limit.Capped() {
+	if capped {
 		finish = openai.FinishLength
 	}
 	if len(calls) > 0 {
@@ -297,14 +416,40 @@ func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, plan turnPla
 
 // writeAgentError maps a session failure onto an HTTP status. Model and
 // configuration problems are rejected before a turn starts, so anything
-// arriving here is the agent's fault.
+// arriving here is the agent's fault — except an image the agent cannot read,
+// which is the caller's request and must be a clear refusal rather than a
+// silently blind answer.
 func (s *Server) writeAgentError(w http.ResponseWriter, err error) {
+	if errors.Is(err, session.ErrImagesUnsupported) {
+		writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest, openai.CodeUnsupportedParameter,
+			"the selected agent did not advertise image prompt support, so the image would be ignored; "+
+				"use an agent that accepts images, or remove the image", openai.ParamImageURL)
+		return
+	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		writeError(w, http.StatusGatewayTimeout, openai.ErrTypeServer, "timeout", err.Error(), "")
 		return
 	}
 	s.log.Warn("handler: agent turn failed", "error", err)
 	writeError(w, http.StatusBadGateway, openai.ErrTypeServer, "agent_error", err.Error(), "")
+}
+
+// contentParts builds the ACP content blocks for a turn: the prompt text,
+// followed by any images the caller supplied.
+func contentParts(prompt string, images []openai.ImagePart) []acp.ContentBlock {
+	if len(images) == 0 {
+		return nil
+	}
+	parts := make([]acp.ContentBlock, 0, len(images)+1)
+	parts = append(parts, acp.TextBlock(prompt))
+	for _, image := range images {
+		parts = append(parts, acp.ContentBlock{
+			Type:     "image",
+			Data:     image.Data,
+			MimeType: image.MimeType,
+		})
+	}
+	return parts
 }
 
 // newChunk builds one streaming chunk with a single choice.

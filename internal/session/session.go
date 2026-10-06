@@ -84,7 +84,12 @@ func (s *state) idleFor() time.Duration {
 // The prompt request runs on its own goroutine so updates can be delivered
 // while the turn is still in flight; without that, streaming would only start
 // once the agent had already finished.
-func (s *state) run(ctx context.Context, prompt string, onUpdate func(acp.SessionUpdate) error) (string, error) {
+func (s *state) run(ctx context.Context, req Request, onUpdate func(acp.SessionUpdate) error) (string, error) {
+	content := req.Parts
+	if len(content) == 0 {
+		content = []acp.ContentBlock{acp.TextBlock(req.Prompt)}
+	}
+
 	ch := make(chan acp.SessionUpdate, updateBuffer)
 	turnCtx, cancelTurn := context.WithCancel(ctx)
 	defer cancelTurn()
@@ -111,7 +116,7 @@ func (s *state) run(ctx context.Context, prompt string, onUpdate func(acp.Sessio
 	go func() {
 		raw, err := s.client.Request(turnCtx, acp.MethodSessionPrompt, acp.PromptRequest{
 			SessionID: s.id,
-			Prompt:    []acp.ContentBlock{acp.TextBlock(prompt)},
+			Prompt:    content,
 		})
 		done <- outcome{raw: raw, err: err}
 	}()

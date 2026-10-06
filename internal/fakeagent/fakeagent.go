@@ -18,6 +18,9 @@
 //	FAKE_AGENT_ENVELOPE_PARTS   how many deltas to split the envelope into
 //	FAKE_AGENT_ENVELOPE_ONCE=1  emit the envelope only on the first turn
 //	FAKE_AGENT_ECHO=1           reply with the prompt it received
+//	FAKE_AGENT_REPLY=text       reply with this text
+//	FAKE_AGENT_REPLY_AFTER=text reply with this text from the second turn on
+//	FAKE_AGENT_IMAGES=1         advertise image prompt support
 //	FAKE_AGENT_EXIT_AFTER=1     exit the process right after the first turn
 package fakeagent
 
@@ -143,11 +146,18 @@ func (a *agent) handleRequest(msg message) {
 			a.write(map[string]any{"jsonrpc": "2.0", "id": rawID(msg.ID), "error": map[string]any{"code": -32603, "message": "init refused"}})
 			return
 		}
+		promptCaps := map[string]any{}
+		if os.Getenv("FAKE_AGENT_IMAGES") == "1" {
+			promptCaps["image"] = true
+		}
 		a.result(msg.ID, map[string]any{
-			"protocolVersion":   1,
-			"agentCapabilities": map[string]any{"loadSession": false},
-			"agentInfo":         map[string]any{"name": "fakeagent", "version": "0.0.1"},
-			"authMethods":       []any{},
+			"protocolVersion": 1,
+			"agentCapabilities": map[string]any{
+				"loadSession":        false,
+				"promptCapabilities": promptCaps,
+			},
+			"agentInfo":   map[string]any{"name": "fakeagent", "version": "0.0.1"},
+			"authMethods": []any{},
 		})
 	case "session/new":
 		a.mu.Lock()
@@ -194,7 +204,13 @@ func (a *agent) turn(msg message) {
 
 	prompt := ""
 	for _, block := range p.Prompt {
-		prompt += block.Text
+		if block.Text != "" {
+			prompt += block.Text
+			continue
+		}
+		// Non-text blocks are reported by type, which is how the tests prove an
+		// image reached the agent as an image block rather than as a placeholder.
+		prompt += "[" + block.Type + "]"
 	}
 
 	for _, piece := range a.turnPieces(prompt) {
@@ -267,6 +283,15 @@ func (a *agent) turnPieces(prompt string) []string {
 
 	if os.Getenv("FAKE_AGENT_ECHO") == "1" {
 		return splitEvery(prompt, envInt("FAKE_AGENT_CHUNKS", 2))
+	}
+
+	// A literal reply, optionally different from the second turn on, which is
+	// how the structured-output retry is exercised.
+	if reply := os.Getenv("FAKE_AGENT_REPLY"); reply != "" {
+		if after := os.Getenv("FAKE_AGENT_REPLY_AFTER"); after != "" && turn > 1 {
+			reply = after
+		}
+		return splitEvery(reply, envInt("FAKE_AGENT_CHUNKS", 2))
 	}
 
 	chunks := envInt("FAKE_AGENT_CHUNKS", 2)

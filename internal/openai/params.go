@@ -62,7 +62,6 @@ const (
 	reasonLogprobs   = "an ACP agent does not expose token probabilities, and synthesising them would be fabrication"
 	reasonChoices    = "multiple choices are not yet supported; they arrive in stage 5"
 	reasonLegacyFns  = "the legacy functions API is not translated to ACP; use tools instead"
-	reasonStructured = "structured outputs are not yet enforced; they arrive in stage 4"
 	reasonAudio      = "an ACP agent produces text, not audio"
 	reasonWebSearch  = "built-in server-side tools have no ACP equivalent; declare your own with tools"
 	reasonModalities = "only text output is supported; an ACP agent cannot produce audio"
@@ -96,7 +95,7 @@ var paramPolicy = map[string]ParamRule{
 	"max_tokens":            {Name: "max_tokens", Disposition: Supported},
 	"max_completion_tokens": {Name: "max_completion_tokens", Disposition: Supported},
 	"max_output_tokens":     {Name: "max_output_tokens", Disposition: Supported},
-
+	"response_format":       {Name: "response_format", Disposition: Supported},
 	/* Accepted and reported: the agent owns its own sampling. */
 	"temperature":       {Name: "temperature", Disposition: Ignored, Reason: reasonSampling},
 	"top_p":             {Name: "top_p", Disposition: Ignored, Reason: reasonSampling},
@@ -117,7 +116,6 @@ var paramPolicy = map[string]ParamRule{
 	/* Unsupported: ignoring these would make the response violate the request. */
 	"functions":          {Name: "functions", Disposition: Unsupported, Reason: reasonLegacyFns},
 	"function_call":      {Name: "function_call", Disposition: Unsupported, Reason: reasonLegacyFns},
-	"response_format":    {Name: "response_format", Disposition: Unsupported, Reason: reasonStructured},
 	"logprobs":           {Name: "logprobs", Disposition: Unsupported, Reason: reasonLogprobs},
 	"top_logprobs":       {Name: "top_logprobs", Disposition: Unsupported, Reason: reasonLogprobs},
 	"audio":              {Name: "audio", Disposition: Unsupported, Reason: reasonAudio},
@@ -159,6 +157,10 @@ func checkN(value any) (Disposition, string) {
 // strict schema enforcement on a tool. It is not a top-level parameter, so it
 // is handled separately from the policy table.
 const ParamToolStrict = "tools[].function.strict"
+
+// ParamImageURL names the nested setting reported for an image part that cannot
+// be sent.
+const ParamImageURL = "messages[].content[].image_url"
 
 // ValidateParams applies the parameter policy to any decoded request struct.
 //

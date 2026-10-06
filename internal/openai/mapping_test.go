@@ -31,7 +31,7 @@ func TestMessageText(t *testing.T) {
 			{"type": "text", "text": "two"},
 			{"type": "image_url"},
 		})}
-		if got := m.Text(); got != "one two[image_url]" {
+		if got := m.Text(); got != "one two[image]" {
 			t.Fatalf("Text() = %q", got)
 		}
 	})

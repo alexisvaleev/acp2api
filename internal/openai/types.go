@@ -150,8 +150,12 @@ func (m Message) Text() string {
 			switch {
 			case p.Text != "":
 				out += p.Text
+			case p.Type == "image_url" || p.Type == "input_image":
+				// The image itself travels as its own content block; the text
+				// transcript only needs a placeholder.
+				out += "[image]"
 			case p.Type != "":
-				out += fmt.Sprintf("[%s]", p.Type)
+				out += "[" + p.Type + "]"
 			}
 		}
 		return out

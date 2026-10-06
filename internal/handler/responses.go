@@ -68,6 +68,13 @@ func (s *Server) handleCreateResponse(w http.ResponseWriter, r *http.Request) {
 		prompt = "## instructions\n" + instructions + "\n\n" + prompt
 	}
 
+	images, err := openai.ImageParts(messages)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest,
+			openai.CodeUnsupportedParameter, err.Error(), openai.ParamImageURL)
+		return
+	}
+
 	plan := responsePlan{
 		req:            req,
 		responseID:     responseID,
@@ -79,6 +86,7 @@ func (s *Server) handleCreateResponse(w http.ResponseWriter, r *http.Request) {
 			ConversationID: conversationID,
 			Workspace:      req.Workspace,
 			Prompt:         prompt,
+			Parts:          contentParts(prompt, images),
 		},
 	}
 

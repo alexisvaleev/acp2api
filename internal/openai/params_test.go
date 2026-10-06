@@ -22,7 +22,6 @@ func TestUnsupportedParametersAreRejected(t *testing.T) {
 	cases := map[string]string{
 		"functions":          `{"functions":[{"name":"f"}]}`,
 		"function_call":      `{"function_call":"auto"}`,
-		"response_format":    `{"response_format":{"type":"json_object"}}`,
 		"logprobs":           `{"logprobs":true}`,
 		"top_logprobs":       `{"top_logprobs":5}`,
 		"n":                  `{"n":3}`,
