@@ -130,6 +130,12 @@ func (m *Manager) Close() error {
 // Agents returns the registered agents, for the model listing.
 func (m *Manager) Agents() []agent.Agent { return m.registry.List() }
 
+// Resolve maps an OpenAI model id to an agent and an optional agent-side model,
+// so callers can reject an unknown model before starting any work.
+func (m *Manager) Resolve(modelID string) (agent.Agent, string, error) {
+	return m.registry.Resolve(modelID)
+}
+
 // Prompt resolves the agent, ensures a connection and a session, and runs one turn.
 func (m *Manager) Prompt(ctx context.Context, req Request, onUpdate func(acp.SessionUpdate) error) (Result, error) {
 	a, model, err := m.registry.Resolve(req.Model)
