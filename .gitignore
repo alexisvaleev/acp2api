@@ -1,0 +1,22 @@
+# Build output
+/bin/
+/dist/
+*.exe
+
+# Local reference checkouts (acp-to-api, acpbox, cli-agent-gateway)
+/reference/
+
+# Local runtime state
+/config.yaml
+/config.local.yaml
+/.env
+/workspace/
+
+# Editor / OS
+.vscode-dev/
+.idea/
+.DS_Store
+
+# Coverage
+*.out
+coverage.html
