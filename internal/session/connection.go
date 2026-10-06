@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -120,9 +121,52 @@ func (m *Manager) startConnection(a agent.Agent, workspace string) (*connection,
 	}
 	c.capabilities = parseCapabilities(initRaw)
 
+	// authenticate is mandatory before session/new for some agents: the Devin
+	// CLI refuses the session with "ACP host has not authenticated" until it is
+	// called, even when the CLI itself is already logged in.
+	if err := c.authenticate(initCtx, cl, a, initRaw); err != nil {
+		_ = cl.Close()
+		return nil, err
+	}
+
 	slog.Info("session: agent ready",
 		"agent", a.ID, "pid", cl.PID(), "workspace", workspace, "images", c.capabilities.Images)
 	return c, nil
+}
+
+// authenticate selects an auth method when the agent advertises any. An agent
+// that advertises none needs no call, which is the common case.
+func (c *connection) authenticate(ctx context.Context, cl *acp.Client, a agent.Agent, initRaw json.RawMessage) error {
+	var init acp.InitializeResponse
+	if err := json.Unmarshal(initRaw, &init); err != nil || len(init.AuthMethods) == 0 {
+		return nil
+	}
+
+	methodID := a.AuthMethod
+	if methodID == "" {
+		methodID = init.AuthMethods[0].ID
+	}
+
+	request := acp.AuthenticateRequest{MethodID: methodID}
+	if a.APIKeyEnv != "" {
+		key := os.Getenv(a.APIKeyEnv)
+		if key == "" {
+			return fmt.Errorf(
+				"session: agent %q requires authentication and %s is not set; "+
+					"run the agent's own login, or set the variable",
+				a.ID, a.APIKeyEnv)
+		}
+		request.Meta = map[string]any{"api_key": key}
+	}
+
+	if _, err := cl.Request(ctx, acp.MethodAuthenticate, request); err != nil {
+		return fmt.Errorf(
+			"session: authenticate agent %q with method %q: %w "+
+				"(if the agent needs a login, run its own login command first)",
+			a.ID, methodID, err)
+	}
+	slog.Debug("session: authenticated", "agent", a.ID, "method", methodID)
+	return nil
 }
 
 // parseCapabilities reads the agent's prompt capabilities. An agent that says

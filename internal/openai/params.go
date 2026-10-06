@@ -60,7 +60,7 @@ const (
 	reasonSampling   = "the agent owns its own sampling"
 	reasonSteering   = "the agent does not expose this control, and dropping it cannot change the shape of the response"
 	reasonLogprobs   = "an ACP agent does not expose token probabilities, and synthesising them would be fabrication"
-	reasonChoices    = "multiple choices are not yet supported; they arrive in stage 5"
+	reasonChoices    = "n above 8 is refused; every choice is a separate agent turn, so the cost is unbounded"
 	reasonLegacyFns  = "the legacy functions API is not translated to ACP; use tools instead"
 	reasonAudio      = "an ACP agent produces text, not audio"
 	reasonWebSearch  = "built-in server-side tools have no ACP equivalent; declare your own with tools"
@@ -145,9 +145,14 @@ func checkModalities(value any) (Disposition, string) {
 	return Supported, ""
 }
 
-// checkN allows the default single choice and rejects a request for more.
+// MaxChoices caps how many completions one request may ask for. Every choice is
+// a separate agent turn, so an unbounded n would be an unbounded cost.
+const MaxChoices = 8
+
+// checkN accepts a single choice and a bounded number of extra ones.
 func checkN(value any) (Disposition, string) {
-	if n, ok := value.(*int); ok && n != nil && *n <= 1 {
+	n, ok := value.(*int)
+	if !ok || n == nil || *n <= MaxChoices {
 		return Supported, ""
 	}
 	return Unsupported, reasonChoices

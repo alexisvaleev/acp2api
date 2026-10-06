@@ -24,7 +24,7 @@ func TestUnsupportedParametersAreRejected(t *testing.T) {
 		"function_call":      `{"function_call":"auto"}`,
 		"logprobs":           `{"logprobs":true}`,
 		"top_logprobs":       `{"top_logprobs":5}`,
-		"n":                  `{"n":3}`,
+		"n":                  `{"n":9}`,
 		"audio":              `{"audio":{"voice":"alloy","format":"wav"}}`,
 		"web_search_options": `{"web_search_options":{}}`,
 		"modalities":         `{"modalities":["text","audio"]}`,
@@ -181,14 +181,16 @@ func TestTemperatureZeroIsPresentNotAbsent(t *testing.T) {
 	}
 }
 
-func TestNIsValueDependent(t *testing.T) {
+func TestNIsBounded(t *testing.T) {
 	for _, tc := range []struct {
 		body    string
 		wantErr bool
 	}{
 		{body: `{"n":1}`},
-		{body: `{"n":3}`, wantErr: true},
+		{body: `{"n":3}`},
 		{body: `{"n":0}`},
+		{body: `{"n":9}`, wantErr: true},
+		{body: `{"n":100}`, wantErr: true},
 	} {
 		req := decode(t, `{"model":"devin","messages":[{"role":"user","content":"hi"}],`+strings.TrimPrefix(tc.body, "{"))
 		_, err := ValidateRequest(req)

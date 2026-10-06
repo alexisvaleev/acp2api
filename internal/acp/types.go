@@ -106,6 +106,17 @@ type AuthMethod struct {
 	Description string `json:"description,omitempty"`
 }
 
+// AuthenticateRequest selects an advertised auth method.
+//
+// Some agents require it before a session can be opened — the Devin CLI refuses
+// session/new with "ACP host has not authenticated" until this call is made,
+// even when the CLI itself is already logged in. Meta carries vendor options,
+// such as an API key for a headless login.
+type AuthenticateRequest struct {
+	MethodID string         `json:"methodId"`
+	Meta     map[string]any `json:"_meta,omitempty"`
+}
+
 // InitializeResponse is the agent's handshake reply.
 type InitializeResponse struct {
 	ProtocolVersion   int               `json:"protocolVersion"`

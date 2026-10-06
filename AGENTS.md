@@ -47,6 +47,7 @@ lota check       # full verification: format, vet, race tests
 lota dev         # run the gateway in development mode
 lota agents      # which agent CLIs are installed
 lota smoke       # build, start, curl the API, stop
+lota conformance # assert the whole HTTP surface against a live server
 lota build       # produce bin/acp2api
 ```
 
@@ -76,6 +77,10 @@ go test ./internal/openai/ -v
   best-effort. Text held back by the stream must always be released as content
   when it turns out not to be an envelope — losing an answer is worse than
   missing a tool call. `internal/openai/toolstream.go` owns that rule.
+- **The ACP handshake order is fixed.** `initialize` → `authenticate` (when the
+  agent advertises auth methods) → `session/new`. The Devin CLI refuses
+  `session/new` with "ACP host has not authenticated" until `authenticate` is
+  called, even when the CLI is already logged in. Do not reorder or skip it.
 - **TDD.** New behavior and bug fixes start with a failing test. The full suite
   is green before work is reported.
 - **No real agents in tests.** Use the fake stdio agent fixture. No network, no

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -176,5 +177,33 @@ func TestMissingAgentBinaryIsReported(t *testing.T) {
 	_, err := m.Prompt(context.Background(), session.Request{Model: "missing", Prompt: "x"}, noop)
 	if err == nil {
 		t.Fatal("expected a missing agent binary to fail")
+	}
+}
+
+// TestAgentRequiringAuthIsAuthenticated covers the flow the Devin CLI needs:
+// initialize advertises an auth method, and session/new is refused until
+// authenticate has been called.
+func TestAgentRequiringAuthIsAuthenticated(t *testing.T) {
+	m, _ := newManager(t, fakeRegistry(), map[string]string{"FAKE_AGENT_REQUIRE_AUTH": "1"})
+
+	if _, err := m.Prompt(context.Background(), session.Request{Model: "fake", Prompt: "hi"}, noop); err != nil {
+		t.Fatalf("the gateway must authenticate before opening a session: %v", err)
+	}
+}
+
+func TestMissingAPIKeyEnvIsReportedClearly(t *testing.T) {
+	registry := agent.NewRegistry(agent.Agent{
+		ID:        "fake",
+		Command:   os.Args[0],
+		APIKeyEnv: "ACP2API_TEST_ABSENT_KEY",
+	})
+	m, _ := newManager(t, registry, map[string]string{"FAKE_AGENT_REQUIRE_AUTH": "1"})
+
+	_, err := m.Prompt(context.Background(), session.Request{Model: "fake", Prompt: "hi"}, noop)
+	if err == nil {
+		t.Fatal("expected a missing api key variable to be reported")
+	}
+	if !strings.Contains(err.Error(), "ACP2API_TEST_ABSENT_KEY") {
+		t.Fatalf("error should name the missing variable: %v", err)
 	}
 }

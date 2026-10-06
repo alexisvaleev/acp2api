@@ -7,6 +7,7 @@ package handler
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -54,13 +55,34 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /v1/models", s.handleModels)
+	mux.HandleFunc("GET /v1/models/{id}", s.handleGetModel)
 	mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
 	mux.HandleFunc("POST /v1/completions", s.handleCompletions)
 	mux.HandleFunc("POST /v1/responses", s.handleCreateResponse)
 	mux.HandleFunc("GET /v1/responses/{id}", s.handleGetResponse)
 	mux.HandleFunc("DELETE /v1/responses/{id}", s.handleDeleteResponse)
+	s.registerUnsupported(mux)
 	mux.HandleFunc("GET /{$}", s.handleRoot)
 	return s.withAuth(mux)
+}
+
+// handleGetModel serves GET /v1/models/{id}.
+func (s *Server) handleGetModel(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	for _, a := range s.manager.Agents() {
+		if a.ID != id {
+			continue
+		}
+		writeJSON(w, http.StatusOK, openai.Model{
+			ID:      a.ID,
+			Object:  openai.ObjectModel,
+			Created: s.started.Unix(),
+			OwnedBy: "acp2api",
+		})
+		return
+	}
+	writeError(w, http.StatusNotFound, openai.ErrTypeInvalidRequest, "model_not_found",
+		fmt.Sprintf("model %q is unknown; available: %s", id, strings.Join(agentIDs(s.manager), ", ")), "")
 }
 
 // handleHealth is unauthenticated so a load balancer or a container runtime can
@@ -77,9 +99,10 @@ func (s *Server) handleRoot(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"name":    "acp2api",
 		"object":  "service",
-		"routes":  []string{"GET /healthz", "GET /v1/models", "POST /v1/chat/completions"},
+		"served":  []string{"GET /healthz", "GET /v1/models", "GET /v1/models/{id}", "POST /v1/chat/completions", "POST /v1/completions", "POST /v1/responses", "GET /v1/responses/{id}", "DELETE /v1/responses/{id}"},
+		"refused": unsupportedRoutes(),
 		"agents":  agentIDs(s.manager),
-		"message": "OpenAI-compatible gateway for ACP agents",
+		"message": "OpenAI-compatible gateway for ACP agents; endpoints without an ACP equivalent return 501",
 	})
 }
 

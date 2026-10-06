@@ -60,6 +60,11 @@ type AgentConfig struct {
 	Command string            `json:"command"`
 	Args    []string          `json:"args"`
 	Env     map[string]string `json:"env"`
+	// AuthMethod overrides which advertised ACP auth method is selected.
+	AuthMethod string `json:"auth_method"`
+	// APIKeyEnv names an environment variable holding an API key for a headless
+	// authenticate. Leave it empty for an agent already logged in on this host.
+	APIKeyEnv string `json:"api_key_env"`
 }
 
 // Default returns the configuration used when nothing is specified.
@@ -180,11 +185,13 @@ func (c Config) Registry() (*agent.Registry, error) {
 			}
 		}
 		r.Register(agent.Agent{
-			ID:      a.ID,
-			Name:    name,
-			Command: a.Command,
-			Args:    a.Args,
-			Env:     a.Env,
+			ID:         a.ID,
+			Name:       name,
+			Command:    a.Command,
+			Args:       a.Args,
+			Env:        a.Env,
+			AuthMethod: a.AuthMethod,
+			APIKeyEnv:  a.APIKeyEnv,
 		})
 	}
 	if len(r.List()) == 0 {

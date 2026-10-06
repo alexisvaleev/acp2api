@@ -20,10 +20,11 @@ and SDKs speak HTTP and expect an OpenAI-shaped API. This is the converter.
 The dev commands live in `lota.yml`:
 
 ```sh
-lota agents      # which agent CLIs are installed on this machine
-lota dev         # run the gateway with the race-free dev token, verbose
-lota smoke       # build, start, curl the API, stop
-lota check       # format, vet, race tests
+lota agents       # which agent CLIs are installed on this machine
+lota dev          # run the gateway with the dev token, verbose
+lota smoke        # build, start, curl the API, stop
+lota conformance  # assert the whole HTTP surface against a live server
+lota check        # format, vet, race tests
 ```
 
 `lota dev` takes flags:
@@ -72,11 +73,46 @@ API key.
 
 ## Endpoints
 
+### Served
+
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
 | `GET` | `/healthz` | Liveness. Never requires a token. |
 | `GET` | `/v1/models` | The configured agents, as OpenAI models. |
+| `GET` | `/v1/models/{id}` | One agent. |
 | `POST` | `/v1/chat/completions` | A turn. Streaming and non-streaming. |
+| `POST` | `/v1/completions` | The legacy text surface. |
+| `POST` | `/v1/responses` | The Responses API. Streaming and non-streaming. |
+| `GET` | `/v1/responses/{id}` | Retrieve a stored response. |
+| `DELETE` | `/v1/responses/{id}` | Delete a stored response. |
+
+### Refused with `501`
+
+These have no ACP equivalent. An ACP agent is a stateful coding agent: it
+produces text and edits files. It cannot embed, transcribe, classify, or
+generate an image, so the gateway refuses rather than fabricating a result.
+
+| Path | Why |
+| ---- | --- |
+| `POST /v1/embeddings` | an ACP agent produces text, not embedding vectors |
+| `POST /v1/moderations` | there is no classifier behind an agent |
+| `POST /v1/images/generations` | an ACP agent does not generate images |
+| `POST /v1/images/edits` | an ACP agent does not edit images |
+| `POST /v1/images/variations` | an ACP agent does not generate image variations |
+| `POST /v1/audio/speech` | an ACP agent produces text, not audio |
+| `POST /v1/audio/transcriptions` | an ACP agent does not transcribe audio |
+| `POST /v1/audio/translations` | an ACP agent does not translate audio |
+| `GET /v1/files`, `POST /v1/files` | the gateway keeps no file store |
+| `GET /v1/files/{id}`, `DELETE /v1/files/{id}` | the gateway keeps no file store |
+| `POST /v1/batches`, `GET /v1/batches` | the gateway runs no batch queue |
+| `POST /v1/fine_tuning/jobs`, `GET /v1/fine_tuning/jobs` | an ACP agent is not a trainable model |
+| `POST /v1/assistants`, `GET /v1/assistants` | superseded; use `POST /v1/responses` |
+| `POST /v1/threads` | superseded; use `POST /v1/responses` |
+| `POST /v1/vector_stores` | the gateway keeps no vector store |
+
+The refusal body is the standard error envelope with
+`code: "unsupported_endpoint"` and a message naming the reason. A test asserts
+this table and the router agree.
 
 ## The `model` field
 
@@ -105,9 +141,13 @@ explicitly rejected, or accepted and reported back to you.
 
 | Disposition | Parameters | Behaviour |
 | ----------- | ---------- | --------- |
-| Supported | `model`, `messages`, `stream`, `stream_options`, `conversation_id`, `user`, `workspace`, `tools`, `tool_choice` | Honoured. |
-| Accepted and reported | `temperature`, `top_p`, `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias` | The agent owns its own sampling, so these cannot be honoured — and you cannot detect that as an error. They are listed in `acp.ignored_params` and in the `X-Acp2api-Ignored-Params` header. |
-| Rejected | `functions`, `function_call`, `response_format`, `stop`, `max_tokens`, `max_completion_tokens`, `logprobs`, `top_logprobs`, `n > 1` | `400` with code `unsupported_parameter`, naming the offending field. Ignoring these would make the response violate your request. |
+| Supported | `model`, `messages`, `stream`, `stream_options`, `conversation_id`, `user`, `workspace`, `tools`, `tool_choice`, `parallel_tool_calls`, `n`, `prompt`, `echo`, `stop`, `max_tokens`, `max_completion_tokens`, `max_output_tokens`, `response_format`, `modalities: ["text"]` | Honoured. |
+| Accepted and reported | `temperature`, `top_p`, `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `reasoning_effort`, `verbosity`, `service_tier`, `prediction`, `store`, `metadata` | The agent owns its own sampling and does not expose these controls, so they cannot be honoured — and you cannot detect that as an error. They are listed in `acp.ignored_params` and in the `X-Acp2api-Ignored-Params` header. `tools[].function.strict` is reported the same way. |
+| Rejected | `functions`, `function_call`, `logprobs`, `top_logprobs`, `audio`, `web_search_options`, `suffix`, `best_of`, `modalities` containing anything but `text`, `n` above 8 | `400` with code `unsupported_parameter`, naming the offending field. Ignoring these would make the response violate your request. |
+
+`n` is capped at 8 because every choice is a separate agent turn, so an
+unbounded `n` would be an unbounded cost. Streaming is refused together with
+`n > 1` and with an array prompt: the choices would interleave.
 
 Rejections carry the reason and the stage that will implement the parameter:
 
@@ -206,6 +246,81 @@ flags. See `config.example.json`.
 
 Environment: `ACP2API_ADDR`, `ACP2API_TOKEN`, `ACP2API_WORKSPACE`,
 `ACP2API_PERMISSION`.
+
+## Agent authentication
+
+Some agents refuse to open a session until the ACP `authenticate` method has
+been called, even when the CLI itself is already logged in. The Devin CLI is one
+of them: without the call, `session/new` fails with *"ACP host has not
+authenticated"*.
+
+The gateway performs the handshake in the right order —
+`initialize` → `authenticate` → `session/new` — selecting the first auth method
+the agent advertises. For a host that is already logged in (`devin auth login`,
+`opencode auth login`, …) that is enough.
+
+For a headless login with an API key, point the agent at the variable holding it:
+
+```json
+{
+  "agents": [
+    { "id": "devin", "command": "devin", "args": ["acp"], "api_key_env": "WINDSURF_API_KEY" }
+  ]
+}
+```
+
+The value is sent as `authenticate`'s `_meta.api_key`. If the variable is unset
+the request fails with an error naming it, rather than a confusing session
+error. `auth_method` overrides which advertised method is chosen.
+
+## Images
+
+Chat and Responses image parts are translated to ACP image content blocks:
+
+```json
+{"role": "user", "content": [
+  {"type": "text", "text": "what is in this image?"},
+  {"type": "image_url", "image_url": {"url": "data:image/png;base64,…"}}
+]}
+```
+
+Two rules, both deliberate:
+
+- **Only data URLs.** A remote URL would make the gateway fetch an arbitrary
+  address on the agent's behalf — a request-forgery vector in a process that can
+  already reach internal services. Inline the bytes instead.
+- **Gated on capability.** The agent must advertise image prompt support during
+  `initialize`. An agent that cannot read images is refused with a clear error
+  rather than answering blind.
+
+## Structured outputs
+
+`response_format` is enforced, not just requested:
+
+```json
+{"response_format": {"type": "json_schema", "json_schema": {
+  "name": "weather",
+  "schema": {"type": "object", "required": ["city"],
+             "properties": {"city": {"type": "string"}}}}}}
+```
+
+The shape is asked for in the prompt, then the reply is verified. A reply that
+does not parse, or does not satisfy the schema, triggers **one retry** with a
+correction; if that also fails the request returns `400`. A structured answer is
+buffered rather than streamed, because streaming it and then reporting it
+invalid would leave you with unusable text.
+
+The schema check covers `type`, `properties`, `required`, `items`, `enum`, and
+`additionalProperties: false`. It is a documented subset, not full JSON Schema:
+claiming more would be exactly the kind of silent lie this project exists to
+avoid. Unsupported keywords are ignored, never used to reject a value.
+
+## `stop` and `max_tokens`
+
+The agent owns its own generation, so these are enforced on the way out.
+`max_tokens` reports `finish_reason: "length"`. `stop` holds back up to
+`len(longest stop) - 1` characters while streaming, so a stop sequence that
+straddles a chunk boundary cannot leak to you.
 
 ## Security
 

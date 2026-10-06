@@ -63,6 +63,11 @@ func (s *Server) handleCompletions(w http.ResponseWriter, r *http.Request) {
 			"streaming is not supported together with an array prompt; send one prompt or disable stream", "stream")
 		return
 	}
+	if req.Stream && req.N != nil && *req.N > 1 {
+		writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest, "unsupported_stream_choices",
+			"streaming is not supported together with n > 1; send one choice or disable stream", "stream")
+		return
+	}
 
 	if req.Stream {
 		s.streamCompletion(w, r, req, prompts[0])
@@ -126,25 +131,40 @@ func (s *Server) runPrompt(r *http.Request, req openai.CompletionRequest, prompt
 }
 
 // blockingCompletion runs every prompt and returns all choices.
+//
+// The legacy API returns n completions per prompt, so the work list is the
+// prompts crossed with n.
 func (s *Server) blockingCompletion(w http.ResponseWriter, r *http.Request, req openai.CompletionRequest, prompts []string, ignored []string) {
-	results := make([]completionRun, len(prompts))
+	repeats := 1
+	if req.N != nil && *req.N > 1 {
+		repeats = *req.N
+	}
 
-	var wg sync.WaitGroup
-	for i, prompt := range prompts {
-		wg.Add(1)
-		go func(i int, prompt string) {
-			defer wg.Done()
-			// A conversation only makes sense for a single prompt; with several
-			// each one needs its own session.
+	type job struct {
+		prompt         string
+		conversationID string
+	}
+	jobs := make([]job, 0, len(prompts)*repeats)
+	for _, prompt := range prompts {
+		for repeat := 0; repeat < repeats; repeat++ {
+			// A conversation only makes sense for a single prompt asked once;
+			// independent choices need independent sessions.
 			conversationID := ""
-			if len(prompts) == 1 {
-				conversationID = req.ConversationID
-				if conversationID == "" {
-					conversationID = req.User
-				}
+			if len(prompts) == 1 && repeats == 1 {
+				conversationID = conversationIDFor(req.ConversationID, req.User)
 			}
-			results[i] = s.runPrompt(r, req, prompt, conversationID)
-		}(i, prompt)
+			jobs = append(jobs, job{prompt: prompt, conversationID: conversationID})
+		}
+	}
+
+	results := make([]completionRun, len(jobs))
+	var wg sync.WaitGroup
+	for i, work := range jobs {
+		wg.Add(1)
+		go func(i int, work job) {
+			defer wg.Done()
+			results[i] = s.runPrompt(r, req, work.prompt, work.conversationID)
+		}(i, work)
 	}
 	wg.Wait()
 
@@ -162,14 +182,14 @@ func (s *Server) blockingCompletion(w http.ResponseWriter, r *http.Request, req 
 	for i, result := range results {
 		text := result.text
 		if req.Echo != nil && *req.Echo {
-			text = prompts[i] + text
+			text = jobs[i].prompt + text
 		}
 		choices = append(choices, openai.CompletionChoice{
 			Text:         text,
 			Index:        i,
 			FinishReason: completionFinish(result),
 		})
-		totalIn += openai.EstimateTokens(prompts[i])
+		totalIn += openai.EstimateTokens(jobs[i].prompt)
 		totalOut += openai.EstimateTokens(result.text)
 		if first == nil {
 			first = result.acp

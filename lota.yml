@@ -129,6 +129,11 @@ smoke:
       -d '{"model":"devin","messages":[{"role":"user","content":"hi"}],"logprobs":true}'
     echo "smoke ok"
 
+conformance:
+  desc: Assert the whole HTTP surface against a live server
+  color: hicyan
+  script: ./test/conformance.sh
+
 clean:
   desc: Remove build output and coverage artifacts
   script: |

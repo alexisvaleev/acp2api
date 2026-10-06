@@ -23,6 +23,13 @@ type Agent struct {
 	Args []string
 	// Env is extra environment for the child, on top of the inherited one.
 	Env map[string]string
+	// AuthMethod overrides which advertised auth method is selected during
+	// authenticate. Empty means the first one the agent advertises.
+	AuthMethod string
+	// APIKeyEnv names an environment variable whose value is sent as the
+	// authenticate `_meta.api_key`, for a headless login. Empty sends no key,
+	// which is right for an agent already logged in on this machine.
+	APIKeyEnv string
 	// ClientCapabilities overrides the default initialize capabilities.
 	// Nil means DefaultCapabilities().
 	ClientCapabilities map[string]any
