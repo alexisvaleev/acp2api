@@ -3,7 +3,8 @@
 /dist/
 *.exe
 
-# Local reference checkouts (acp-to-api, acpbox, cli-agent-gateway)
+# Optional local checkouts of upstream projects, for reading while you work.
+# Nothing is cloned here by default; see "Prior art" in AGENTS.md.
 /reference/
 
 # Local runtime state

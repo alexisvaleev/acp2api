@@ -24,7 +24,6 @@ subprocess and translates the conversation to ACP JSON-RPC over stdio.
 - `internal/openai/` — OpenAI request/response/SSE types and the ACP→OpenAI mapping.
 - `internal/handler/` — thin HTTP handlers. No protocol details leak here.
 - `internal/config/` — config file + env loading and validation.
-- `reference/` — local checkouts of upstream projects. Gitignored. Read-only.
 
 ## Layers and dependency direction
 

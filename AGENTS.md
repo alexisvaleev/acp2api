@@ -36,7 +36,6 @@ OpenAI client ──HTTP/SSE──▶ gateway ──JSON-RPC over stdio──▶
   envelope contract, and the ACP→OpenAI mapping.
 - `internal/handler/` — thin HTTP handlers and middleware.
 - `internal/config/` — config loading.
-- `reference/` — gitignored upstream checkouts used for design reference.
 
 ## Commands
 
@@ -97,11 +96,18 @@ go test ./internal/openai/ -v
 `.devin/rules/global_rules.md` is the source of truth for architecture, Go
 conventions, file-size limits, and the commit format. Read it before writing code.
 
-## Prior art (in `reference/`)
+## Prior art
 
-- `acp-to-api` (Python) — OpenAI/Responses/Anthropic fronts, daemon mode, dashboard.
-- `acpbox` (Python) — the clearest reference for ACP↔OpenAI mapping and agent adapters.
-- `cli-agent-gateway` (Go) — the closest sibling; multi-protocol fronts and a tool-loop translator.
+No upstream checkout is vendored in this repository. The design was informed by
+three projects, which are worth reading on their own:
 
-We borrow their *contracts* (endpoint shapes, the `acp` extension field, config
-format) and their *test ideas*, not their code.
+- [`acp-to-api`](https://github.com/pingu1m/acp-to-api) (Python) — OpenAI,
+  Responses and Anthropic fronts, daemon mode, dashboard.
+- [`acpbox`](https://github.com/EvilFreelancer/acpbox) (Python) — the clearest
+  reference for ACP↔OpenAI mapping and agent adapters.
+- [`cli-agent-gateway`](https://github.com/chaojimct/cli-agent-gateway) (Go) —
+  the closest sibling; multi-protocol fronts and a tool-loop translator.
+
+We borrow their *contracts* — endpoint shapes, the `acp` extension field, the
+config format — and their *test ideas*, not their code. If you want a local
+checkout while working, clone one into a directory of your own; do not commit it.
