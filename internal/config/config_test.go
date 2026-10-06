@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -154,6 +155,132 @@ func TestBuiltinsRemainByDefault(t *testing.T) {
 	}
 	if _, ok := registry.Get("custom"); !ok {
 		t.Fatal("the configured agent is missing")
+	}
+}
+
+func TestProxyEnvSetsBothCases(t *testing.T) {
+	proxy := config.ProxyConfig{URL: "socks5://127.0.0.1:1080", NoProxy: "localhost,.internal"}
+	env := proxy.Env()
+
+	// Tools disagree about which case they read, so both are set; setting only
+	// one is a silent failure.
+	for _, name := range []string{"HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"} {
+		if env[name] != "socks5://127.0.0.1:1080" {
+			t.Fatalf("%s = %q", name, env[name])
+		}
+	}
+	for _, name := range []string{"NO_PROXY", "no_proxy"} {
+		if env[name] != "localhost,.internal" {
+			t.Fatalf("%s = %q", name, env[name])
+		}
+	}
+}
+
+func TestProxyEnvPerProtocolOverride(t *testing.T) {
+	proxy := config.ProxyConfig{
+		URL:   "http://all:3128",
+		HTTPS: "http://secure:3128",
+	}
+	env := proxy.Env()
+
+	if env["HTTP_PROXY"] != "http://all:3128" {
+		t.Fatalf("HTTP_PROXY = %q", env["HTTP_PROXY"])
+	}
+	if env["HTTPS_PROXY"] != "http://secure:3128" {
+		t.Fatalf("HTTPS_PROXY = %q, the override should win", env["HTTPS_PROXY"])
+	}
+	if env["ALL_PROXY"] != "http://all:3128" {
+		t.Fatalf("ALL_PROXY = %q", env["ALL_PROXY"])
+	}
+}
+
+func TestProxyEnvEmptyWhenUnset(t *testing.T) {
+	env := (config.ProxyConfig{}).Env()
+	if len(env) != 0 {
+		t.Fatalf("an unset proxy must produce no variables, got %v", env)
+	}
+	if (config.ProxyConfig{}).Configured() {
+		t.Fatal("an unset proxy must not report itself configured")
+	}
+}
+
+// TestProxyRedactedHidesCredentials matters because the proxy URL may carry a
+// password and the value ends up in a log line.
+func TestProxyRedactedHidesCredentials(t *testing.T) {
+	proxy := config.ProxyConfig{URL: "http://user:secret@proxy.example:3128"}
+
+	got := proxy.Redacted()
+	if strings.Contains(got, "secret") {
+		t.Fatalf("credentials leaked: %q", got)
+	}
+	if !strings.Contains(got, "proxy.example") {
+		t.Fatalf("the host should survive redaction: %q", got)
+	}
+}
+
+func TestValidateRejectsABadProxyURL(t *testing.T) {
+	for _, raw := range []string{"://nope", "not-a-url", "http://"} {
+		cfg := config.Default()
+		cfg.Proxy = config.ProxyConfig{URL: raw}
+		if err := cfg.Validate(); err == nil {
+			t.Fatalf("expected proxy url %q to be rejected", raw)
+		}
+	}
+
+	cfg := config.Default()
+	cfg.Proxy = config.ProxyConfig{URL: "socks5://127.0.0.1:1080"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("a valid proxy url must pass: %v", err)
+	}
+}
+
+func TestValidateRejectsAnUnknownCredentialSource(t *testing.T) {
+	cfg := config.Default()
+	cfg.Agents = []config.AgentConfig{
+		{ID: "devin", Command: "devin", CredentialSource: "sometimes"},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected an unknown credential_source to be rejected")
+	}
+}
+
+func TestRegistryAppliesTheProxyToEveryAgent(t *testing.T) {
+	cfg := config.Default()
+	cfg.Proxy = config.ProxyConfig{URL: "http://proxy:3128"}
+
+	registry, err := cfg.Registry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range registry.List() {
+		if a.Env["HTTPS_PROXY"] != "http://proxy:3128" {
+			t.Fatalf("agent %q did not receive the proxy: %v", a.ID, a.Env)
+		}
+	}
+}
+
+// TestPerAgentEnvWinsOverTheProxy covers the layering: one agent may need to
+// bypass the proxy the others use.
+func TestPerAgentEnvWinsOverTheProxy(t *testing.T) {
+	cfg := config.Default()
+	cfg.DisableBuiltins = true
+	cfg.Proxy = config.ProxyConfig{URL: "http://proxy:3128"}
+	cfg.Agents = []config.AgentConfig{
+		{ID: "direct", Command: "direct", Env: map[string]string{"HTTPS_PROXY": ""}},
+		{ID: "proxied", Command: "proxied"},
+	}
+
+	registry, err := cfg.Registry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	direct, _ := registry.Get("direct")
+	if direct.Env["HTTPS_PROXY"] != "" {
+		t.Fatalf("the agent's own setting should win, got %q", direct.Env["HTTPS_PROXY"])
+	}
+	proxied, _ := registry.Get("proxied")
+	if proxied.Env["HTTPS_PROXY"] != "http://proxy:3128" {
+		t.Fatalf("the other agent should still be proxied, got %q", proxied.Env["HTTPS_PROXY"])
 	}
 }
 

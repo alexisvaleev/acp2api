@@ -94,9 +94,12 @@ func (m *Manager) startConnection(a agent.Agent, workspace string) (*connection,
 	}
 
 	cl, err := acp.Start(m.ctx, acp.Options{
-		Command:        a.Command,
-		Args:           a.Args,
-		Env:            buildEnv(m.opts.Env),
+		Command: a.Command,
+		Args:    a.Args,
+		// The agent's own env is layered last, so a per-agent setting wins over
+		// the manager's — which is how a proxy or a model override reaches one
+		// agent and not the others.
+		Env:            buildEnv(m.opts.Env, a.Env),
 		Dir:            workspace,
 		OnRequest:      c.onRequest,
 		OnNotification: c.onNotification,
@@ -154,16 +157,21 @@ func (c *connection) authenticate(ctx context.Context, cl *acp.Client, a agent.A
 	case a.HasKey():
 		// Resolved once at startup, by the agent's module or from APIKeyEnv.
 		request.Meta = map[string]any{"api_key": a.APIKey}
+	case a.WantsInteractiveAuth():
+		// No key by design: call the method as advertised. For the Devin CLI
+		// that is a browser PKCE flow, which is why it has to be asked for.
+	case a.CredentialMode() == agent.CredentialNone:
+		return nil
 	case a.APIKeyEnv != "":
 		return fmt.Errorf(
 			"session: agent %q is configured with api_key_env %q but no value was resolved at startup",
 			a.ID, a.APIKeyEnv)
-	case !a.AllowInteractiveAuth:
+	default:
 		slog.Warn("session: skipping authenticate because no key was resolved",
 			"agent", a.ID,
 			"advertised_method", request.MethodID,
 			"hint", "set api_key_env to the variable holding the agent's key, "+
-				"or allow_interactive_auth if a browser prompt is acceptable")
+				"or credential_source \"interactive\" if a browser prompt is acceptable")
 		return nil
 	}
 

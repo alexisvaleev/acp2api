@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,6 +56,102 @@ type Config struct {
 	// Agents are served. Without it the Agents list can only add and override,
 	// which makes /v1/models advertise agents the host cannot run.
 	DisableBuiltins bool `json:"disable_builtins"`
+	// Proxy routes the agents' outbound traffic. The gateway itself makes no
+	// outbound requests, so this exists for the agent CLIs.
+	Proxy ProxyConfig `json:"proxy"`
+}
+
+// ProxyConfig is the proxy the agent CLIs should use.
+//
+// It is applied as environment, not by interception: every agent CLI reaches
+// its own API over HTTP, and the standard proxy variables are how that is
+// routed — for a corporate egress, or to reach an API that is not served in the
+// host's region.
+type ProxyConfig struct {
+	// URL applies to every protocol. A scheme such as socks5:// is honoured by
+	// most CLIs.
+	URL string `json:"url"`
+	// HTTP and HTTPS override URL for a single protocol.
+	HTTP  string `json:"http"`
+	HTTPS string `json:"https"`
+	// NoProxy lists hosts that bypass the proxy, comma separated.
+	NoProxy string `json:"no_proxy"`
+}
+
+// Env renders the proxy as the environment an agent CLI expects.
+//
+// Both cases of each name are set: tools disagree about which they read, and
+// setting only one is a silent failure. The values may carry credentials, so
+// this is never logged verbatim.
+func (p ProxyConfig) Env() map[string]string {
+	env := map[string]string{}
+
+	all := p.URL
+	httpURL := firstNonEmpty(p.HTTP, p.URL)
+	httpsURL := firstNonEmpty(p.HTTPS, p.URL)
+
+	for _, pair := range []struct{ name, value string }{
+		{"HTTP_PROXY", httpURL}, {"http_proxy", httpURL},
+		{"HTTPS_PROXY", httpsURL}, {"https_proxy", httpsURL},
+		{"ALL_PROXY", all}, {"all_proxy", all},
+		{"NO_PROXY", p.NoProxy}, {"no_proxy", p.NoProxy},
+	} {
+		if pair.value != "" {
+			env[pair.name] = pair.value
+		}
+	}
+	return env
+}
+
+// Configured reports whether any proxy is set.
+func (p ProxyConfig) Configured() bool {
+	return p.URL != "" || p.HTTP != "" || p.HTTPS != ""
+}
+
+// Redacted renders the proxy for a log line, with any credentials removed.
+func (p ProxyConfig) Redacted() string {
+	if !p.Configured() {
+		return ""
+	}
+	return redactURL(firstNonEmpty(p.HTTPS, p.HTTP, p.URL))
+}
+
+// redactURL strips userinfo credentials from a URL.
+func redactURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.User == nil {
+		return raw
+	}
+	parsed.User = url.User("***")
+	return parsed.String()
+}
+
+// firstNonEmpty returns the first non-empty string.
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// mergeEnv layers environment maps, later ones winning.
+func mergeEnv(layers ...map[string]string) map[string]string {
+	total := 0
+	for _, layer := range layers {
+		total += len(layer)
+	}
+	if total == 0 {
+		return nil
+	}
+	out := make(map[string]string, total)
+	for _, layer := range layers {
+		for k, v := range layer {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // AgentConfig describes one agent CLI, overriding or extending the built-ins.
@@ -69,9 +166,9 @@ type AgentConfig struct {
 	// APIKeyEnv names an environment variable holding an API key for a headless
 	// authenticate. Leave it empty for an agent already logged in on this host.
 	APIKeyEnv string `json:"api_key_env"`
-	// AllowInteractiveAuth permits an authenticate call that may open a browser
-	// or prompt. Off by default, because a daemon must not open windows.
-	AllowInteractiveAuth bool `json:"allow_interactive_auth"`
+	// CredentialSource is "auto" (default), "env", "interactive" or "none".
+	// See agent.Agent.CredentialSource.
+	CredentialSource string `json:"credential_source"`
 }
 
 // Default returns the configuration used when nothing is specified.
@@ -174,6 +271,29 @@ func (c Config) Validate() error {
 		if strings.TrimSpace(a.Command) == "" {
 			return fmt.Errorf("config: agent %q needs a command", a.ID)
 		}
+		switch a.CredentialSource {
+		case "", agent.CredentialAuto, agent.CredentialEnv,
+			agent.CredentialInteractive, agent.CredentialNone:
+		default:
+			return fmt.Errorf(
+				"config: agent %q has credential_source %q; want auto, env, interactive or none",
+				a.ID, a.CredentialSource)
+		}
+	}
+
+	for name, raw := range map[string]string{
+		"url": c.Proxy.URL, "http": c.Proxy.HTTP, "https": c.Proxy.HTTPS,
+	} {
+		if raw == "" {
+			continue
+		}
+		parsed, err := url.Parse(raw)
+		if err != nil {
+			return fmt.Errorf("config: proxy.%s is not a valid url: %w", name, err)
+		}
+		if parsed.Scheme == "" || parsed.Host == "" {
+			return fmt.Errorf("config: proxy.%s must include a scheme and host, got %q", name, raw)
+		}
 	}
 	return nil
 }
@@ -210,37 +330,55 @@ func (c Config) BuildRegistry(modules []agent.Module, source agent.Source) (*age
 // overrides, so a config entry can retarget a built-in command. With
 // DisableBuiltins only the configured agents exist.
 func (c Config) Registry() (*agent.Registry, error) {
-	var r *agent.Registry
-	if c.DisableBuiltins {
-		r = agent.NewRegistry()
-	} else {
-		r = agent.BuiltinRegistry()
+	proxyEnv := c.Proxy.Env()
+
+	// Start from the built-ins, unless they are disabled.
+	var agents []agent.Agent
+	if !c.DisableBuiltins {
+		agents = agent.Builtins()
+	}
+	// The proxy is global, so it reaches built-ins too — not only the agents a
+	// configuration happens to name.
+	for i := range agents {
+		agents[i].Env = mergeEnv(proxyEnv, agents[i].Env)
 	}
 
-	for _, a := range c.Agents {
-		name := a.Name
-		if name == "" {
-			if existing, ok := r.Get(a.ID); ok {
-				name = existing.Name
-			} else {
-				name = a.ID
-			}
-		}
-		r.Register(agent.Agent{
-			ID:                   a.ID,
-			Name:                 name,
-			Command:              a.Command,
-			Args:                 a.Args,
-			Env:                  a.Env,
-			AuthMethod:           a.AuthMethod,
-			APIKeyEnv:            a.APIKeyEnv,
-			AllowInteractiveAuth: a.AllowInteractiveAuth,
-		})
+	// Then apply the configured agents: an entry overrides a built-in by id, or
+	// adds a new one.
+	index := make(map[string]int, len(agents))
+	for i, a := range agents {
+		index[a.ID] = i
 	}
-	if len(r.List()) == 0 {
+	for _, configured := range c.Agents {
+		entry := agent.Agent{
+			ID:               configured.ID,
+			Name:             configured.Name,
+			Command:          configured.Command,
+			Args:             configured.Args,
+			Env:              mergeEnv(proxyEnv, configured.Env),
+			AuthMethod:       configured.AuthMethod,
+			APIKeyEnv:        configured.APIKeyEnv,
+			CredentialSource: configured.CredentialSource,
+		}
+		if i, ok := index[configured.ID]; ok {
+			// An override keeps the built-in display name unless it sets one.
+			if entry.Name == "" {
+				entry.Name = agents[i].Name
+			}
+			agents[i] = entry
+			continue
+		}
+		if entry.Name == "" {
+			entry.Name = entry.ID
+		}
+		index[entry.ID] = len(agents)
+		agents = append(agents, entry)
+	}
+
+	if len(agents) == 0 {
 		return nil, errors.New("config: no agents configured")
 	}
-	return r, nil
+	return agent.NewRegistry(agents...), nil
 }
 
 // isLoopback reports whether an address is bound to loopback only.

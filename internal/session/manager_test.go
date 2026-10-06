@@ -195,9 +195,9 @@ func TestMissingAgentBinaryIsReported(t *testing.T) {
 // actually happens; the default path is covered below.
 func TestAgentRequiringAuthIsAuthenticated(t *testing.T) {
 	registry := agent.NewRegistry(agent.Agent{
-		ID:                   "fake",
-		Command:              os.Args[0],
-		AllowInteractiveAuth: true,
+		ID:               "fake",
+		Command:          os.Args[0],
+		CredentialSource: agent.CredentialInteractive,
 	})
 	m, _ := newManager(t, registry, map[string]string{"FAKE_AGENT_REQUIRE_AUTH": "1"})
 
@@ -248,9 +248,9 @@ func TestNoKeyMeansNoInteractiveAuth(t *testing.T) {
 // TestInteractiveAuthIsOptIn covers an operator explicitly accepting a prompt.
 func TestInteractiveAuthIsOptIn(t *testing.T) {
 	registry := agent.NewRegistry(agent.Agent{
-		ID:                   "fake",
-		Command:              os.Args[0],
-		AllowInteractiveAuth: true,
+		ID:               "fake",
+		Command:          os.Args[0],
+		CredentialSource: agent.CredentialInteractive,
 	})
 	m, _ := newManager(t, registry, map[string]string{"FAKE_AGENT_REQUIRE_AUTH": "1"})
 

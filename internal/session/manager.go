@@ -12,6 +12,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -253,11 +254,38 @@ func (m *Manager) reapOnce() {
 	}
 }
 
-// buildEnv merges extra environment variables over the inherited environment.
-func buildEnv(extra map[string]string) []string {
-	env := os.Environ()
-	for k, v := range extra {
-		env = append(env, k+"="+v)
+// buildEnv layers extra variables over the inherited environment.
+//
+// Layers merge in order, later winning, and the result is de-duplicated.
+// Appending a second HTTPS_PROXY would not override the inherited one: getenv
+// returns the first match in environ, so the inherited value would win and the
+// override would be lost without a word.
+func buildEnv(layers ...map[string]string) []string {
+	merged := make(map[string]string)
+	order := make([]string, 0, len(os.Environ()))
+
+	put := func(name, value string) {
+		if _, seen := merged[name]; !seen {
+			order = append(order, name)
+		}
+		merged[name] = value
 	}
-	return env
+
+	for _, entry := range os.Environ() {
+		name, value, ok := strings.Cut(entry, "=")
+		if ok {
+			put(name, value)
+		}
+	}
+	for _, layer := range layers {
+		for name, value := range layer {
+			put(name, value)
+		}
+	}
+
+	out := make([]string, 0, len(order))
+	for _, name := range order {
+		out = append(out, name+"="+merged[name])
+	}
+	return out
 }

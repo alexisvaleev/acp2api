@@ -120,6 +120,8 @@ func run() error {
 			"workspace", workspaceDir,
 			"agents", strings.Join(agentIDs(registry), ","),
 			"auth", cfg.Token != "",
+			// Redacted: a proxy URL may carry credentials.
+			"proxy", cfg.Proxy.Redacted(),
 		)
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serveErr <- err

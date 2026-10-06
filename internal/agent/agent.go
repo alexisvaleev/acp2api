@@ -34,13 +34,49 @@ type Agent struct {
 	// module or from APIKeyEnv. It is held for the process lifetime and is
 	// never logged.
 	APIKey string
-	// AllowInteractiveAuth permits an authenticate call that may open a browser
-	// or prompt. It is off by default: a daemon must not open windows, and an
-	// agent that needs credentials should be given a key instead.
-	AllowInteractiveAuth bool
+	// CredentialSource decides where the credential comes from, and therefore
+	// whether an interactive flow is ever allowed. One knob, because the two
+	// questions are the same question.
+	//
+	//   auto        (default) APIKeyEnv, then the agent's module
+	//   env         APIKeyEnv only; a missing value stops the process
+	//   interactive never send a key; let the agent prompt, browser included
+	//   none        never authenticate
+	CredentialSource string
 	// ClientCapabilities overrides the default initialize capabilities.
 	// Nil means DefaultCapabilities().
 	ClientCapabilities map[string]any
+}
+
+// Credential sources. See Agent.CredentialSource.
+const (
+	CredentialAuto        = "auto"
+	CredentialEnv         = "env"
+	CredentialInteractive = "interactive"
+	CredentialNone        = "none"
+)
+
+// CredentialMode returns the agent's credential source, defaulting to auto.
+func (a Agent) CredentialMode() string {
+	if a.CredentialSource == "" {
+		return CredentialAuto
+	}
+	return a.CredentialSource
+}
+
+// WantsInteractiveAuth reports whether the agent may prompt or open a browser.
+func (a Agent) WantsInteractiveAuth() bool {
+	return a.CredentialMode() == CredentialInteractive
+}
+
+// UsesStoredCredential reports whether the gateway may supply a key at all.
+func (a Agent) UsesStoredCredential() bool {
+	switch a.CredentialMode() {
+	case CredentialInteractive, CredentialNone:
+		return false
+	default:
+		return true
+	}
 }
 
 // Capabilities returns the client capabilities to send during initialize.

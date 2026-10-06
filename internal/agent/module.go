@@ -93,6 +93,11 @@ func ResolveCredentials(agents []Agent, modules []Module, source Source) ([]Agen
 	for i := range out {
 		a := &out[i]
 
+		// interactive and none mean "no key by design", so nothing is resolved.
+		if !a.UsesStoredCredential() {
+			continue
+		}
+
 		// An explicit setting wins: the operator named the variable to use.
 		if a.APIKeyEnv != "" {
 			key := source.Env(a.APIKeyEnv)
@@ -108,7 +113,13 @@ func ResolveCredentials(agents []Agent, modules []Module, source Source) ([]Agen
 			continue
 		}
 
-		// Otherwise ask the module, which may know where the agent keeps it.
+		if a.CredentialMode() == CredentialEnv {
+			return nil, fmt.Errorf(
+				"agent %q uses credential_source %q but names no api_key_env to read",
+				a.ID, CredentialEnv)
+		}
+
+		// auto: ask the module, which may know where the agent keeps it.
 		module, ok := byID[a.ID]
 		if !ok {
 			continue
