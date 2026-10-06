@@ -78,6 +78,26 @@ type ProxyConfig struct {
 	NoProxy string `json:"no_proxy"`
 }
 
+// validate checks the URLs in a proxy block. prefix names the block in the
+// error, so a bad per-agent value is not mistaken for a bad global one.
+func (p ProxyConfig) validate(prefix string) error {
+	for name, raw := range map[string]string{
+		"url": p.URL, "http": p.HTTP, "https": p.HTTPS,
+	} {
+		if raw == "" {
+			continue
+		}
+		parsed, err := url.Parse(raw)
+		if err != nil {
+			return fmt.Errorf("config: %s.%s is not a valid url: %w", prefix, name, err)
+		}
+		if parsed.Scheme == "" || parsed.Host == "" {
+			return fmt.Errorf("config: %s.%s must include a scheme and host, got %q", prefix, name, raw)
+		}
+	}
+	return nil
+}
+
 // Env renders the proxy as the environment an agent CLI expects.
 //
 // Both cases of each name are set: tools disagree about which they read, and
@@ -169,6 +189,9 @@ type AgentConfig struct {
 	// CredentialSource is "auto" (default), "env", "interactive" or "none".
 	// See agent.Agent.CredentialSource.
 	CredentialSource string `json:"credential_source"`
+	// Proxy overrides the global proxy for this agent only. Absent inherits the
+	// global one; present replaces it, and an empty url sends this agent direct.
+	Proxy *ProxyConfig `json:"proxy"`
 }
 
 // Default returns the configuration used when nothing is specified.
@@ -279,23 +302,14 @@ func (c Config) Validate() error {
 				"config: agent %q has credential_source %q; want auto, env, interactive or none",
 				a.ID, a.CredentialSource)
 		}
+		if a.Proxy != nil {
+			if err := a.Proxy.validate("agents." + a.ID + ".proxy"); err != nil {
+				return err
+			}
+		}
 	}
 
-	for name, raw := range map[string]string{
-		"url": c.Proxy.URL, "http": c.Proxy.HTTP, "https": c.Proxy.HTTPS,
-	} {
-		if raw == "" {
-			continue
-		}
-		parsed, err := url.Parse(raw)
-		if err != nil {
-			return fmt.Errorf("config: proxy.%s is not a valid url: %w", name, err)
-		}
-		if parsed.Scheme == "" || parsed.Host == "" {
-			return fmt.Errorf("config: proxy.%s must include a scheme and host, got %q", name, raw)
-		}
-	}
-	return nil
+	return c.Proxy.validate("proxy")
 }
 
 // BuildRegistry assembles the agents, applies the per-agent modules, resolves
@@ -350,12 +364,20 @@ func (c Config) Registry() (*agent.Registry, error) {
 		index[a.ID] = i
 	}
 	for _, configured := range c.Agents {
+		// An agent's own proxy replaces the global one rather than merging with
+		// it: a half-override would leave one protocol pointed at the global
+		// proxy and another at the agent's, which is never what was meant.
+		proxy := c.Proxy
+		if configured.Proxy != nil {
+			proxy = *configured.Proxy
+		}
+
 		entry := agent.Agent{
 			ID:               configured.ID,
 			Name:             configured.Name,
 			Command:          configured.Command,
 			Args:             configured.Args,
-			Env:              mergeEnv(proxyEnv, configured.Env),
+			Env:              mergeEnv(proxy.Env(), configured.Env),
 			AuthMethod:       configured.AuthMethod,
 			APIKeyEnv:        configured.APIKeyEnv,
 			CredentialSource: configured.CredentialSource,

@@ -284,6 +284,74 @@ func TestPerAgentEnvWinsOverTheProxy(t *testing.T) {
 	}
 }
 
+func TestPerAgentProxyReplacesTheGlobalOne(t *testing.T) {
+	cfg := config.Default()
+	cfg.DisableBuiltins = true
+	cfg.Proxy = config.ProxyConfig{URL: "http://global:3128"}
+	cfg.Agents = []config.AgentConfig{
+		{ID: "own", Command: "own", Proxy: &config.ProxyConfig{URL: "socks5://own:1080"}},
+		{ID: "direct", Command: "direct", Proxy: &config.ProxyConfig{}},
+		{ID: "inherits", Command: "inherits"},
+	}
+
+	registry, err := cfg.Registry()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	own, _ := registry.Get("own")
+	if own.Env["HTTPS_PROXY"] != "socks5://own:1080" {
+		t.Fatalf("own proxy = %q", own.Env["HTTPS_PROXY"])
+	}
+
+	// An empty proxy block means "this agent goes direct", not "inherit".
+	direct, _ := registry.Get("direct")
+	if _, ok := direct.Env["HTTPS_PROXY"]; ok {
+		t.Fatalf("direct agent should have no proxy, got %q", direct.Env["HTTPS_PROXY"])
+	}
+
+	inherits, _ := registry.Get("inherits")
+	if inherits.Env["HTTPS_PROXY"] != "http://global:3128" {
+		t.Fatalf("inherited proxy = %q", inherits.Env["HTTPS_PROXY"])
+	}
+}
+
+func TestPerAgentProxyOverrideIsNotMerged(t *testing.T) {
+	cfg := config.Default()
+	cfg.DisableBuiltins = true
+	cfg.Proxy = config.ProxyConfig{URL: "http://global:3128", NoProxy: "global.internal"}
+	cfg.Agents = []config.AgentConfig{
+		{ID: "own", Command: "own", Proxy: &config.ProxyConfig{URL: "http://own:3128"}},
+	}
+
+	registry, err := cfg.Registry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	own, _ := registry.Get("own")
+
+	// A half-override would leave the global no_proxy behind, pointing at a
+	// proxy this agent does not use.
+	if _, ok := own.Env["NO_PROXY"]; ok {
+		t.Fatalf("the global no_proxy leaked into the override: %q", own.Env["NO_PROXY"])
+	}
+}
+
+func TestValidateNamesTheAgentWithABadProxy(t *testing.T) {
+	cfg := config.Default()
+	cfg.Agents = []config.AgentConfig{
+		{ID: "devin", Command: "devin", Proxy: &config.ProxyConfig{URL: "not-a-url"}},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected a bad per-agent proxy url to be rejected")
+	}
+	if !strings.Contains(err.Error(), "devin") {
+		t.Fatalf("the error should name the agent: %v", err)
+	}
+}
+
 func TestDurationAccessors(t *testing.T) {
 	cfg := config.Default()
 	if got := cfg.RequestTimeout(); got != config.DefaultRequestTimeout {
