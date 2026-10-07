@@ -231,6 +231,7 @@ type PlanEntry struct {
 type ToolCall struct {
 	ToolCallID string          `json:"toolCallId"`
 	Title      string          `json:"title,omitempty"`
+	Name       string          `json:"name,omitempty"`
 	Kind       string          `json:"kind,omitempty"`
 	Status     string          `json:"status,omitempty"`
 	Content    json.RawMessage `json:"content,omitempty"`
@@ -241,11 +242,16 @@ type ToolCall struct {
 
 // SessionUpdate is one session/update payload. Unknown fields are preserved in
 // Raw so vendor extensions survive a round trip through the mapping layer.
+//
+// Name is the programmatic name of the invoked tool, such as `exec` or
+// `mcp__github__create_issue`. It is optional and only some agents report it;
+// when it is absent, only the human-readable Title identifies the tool.
 type SessionUpdate struct {
 	SessionUpdate string          `json:"sessionUpdate"`
 	Content       *ContentBlock   `json:"content,omitempty"`
 	ToolCallID    string          `json:"toolCallId,omitempty"`
 	Title         string          `json:"title,omitempty"`
+	Name          string          `json:"name,omitempty"`
 	Kind          string          `json:"kind,omitempty"`
 	Status        string          `json:"status,omitempty"`
 	RawInput      json.RawMessage `json:"rawInput,omitempty"`

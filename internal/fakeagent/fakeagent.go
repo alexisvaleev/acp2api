@@ -8,17 +8,24 @@
 //
 //	ACP2API_FAKE_AGENT=1        required marker; runs the agent loop
 //	FAKE_AGENT_CHUNKS=3         number of agent_message_chunk updates per turn
+//	FAKE_AGENT_CHUNK_DELAY_MS=n wait this long between answer chunks, so a turn
+//	                            spans time and interleaves with another session
 //	FAKE_AGENT_THOUGHT=text     emit this text as agent_thought_chunk updates
 //	                            before the answer, split by FAKE_AGENT_CHUNKS
 //	FAKE_AGENT_STOP_REASON      stop reason returned by session/prompt
 //	FAKE_AGENT_FAIL_INIT=1      answer initialize with a JSON-RPC error
 //	FAKE_AGENT_READ_PATH=/x     request fs/read_text_file during the turn
 //	FAKE_AGENT_WRITE_PATH=/x    request fs/write_text_file during the turn
+//	FAKE_AGENT_FS_REPORT=1      append the outcome of those calls to the reply
 //	FAKE_AGENT_REQUEST_PERM=1   request session/request_permission during the turn
 //	FAKE_AGENT_ENVELOPE=name    reply with a tool-call envelope for that function
 //	FAKE_AGENT_ENVELOPE_PREFIX  prose to emit before the envelope
 //	FAKE_AGENT_ENVELOPE_PARTS   how many deltas to split the envelope into
 //	FAKE_AGENT_ENVELOPE_ONCE=1  emit the envelope only on the first turn
+//	FAKE_AGENT_TOOL_NAME=name   emit a tool_call with this programmatic name
+//	                            (e.g. exec or mcp__github__create_issue)
+//	FAKE_AGENT_TOOL_TITLE=text  title for the emitted tool_call
+//	FAKE_AGENT_TOOL_KIND=kind   kind for the emitted tool_call
 //	FAKE_AGENT_ECHO=1           reply with the prompt it received
 //	FAKE_AGENT_REPLY=text       reply with this text
 //	FAKE_AGENT_REPLY_AFTER=text reply with this text from the second turn on

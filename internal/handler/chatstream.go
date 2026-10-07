@@ -70,6 +70,7 @@ func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, plan turnPla
 	var reasoning strings.Builder
 	var steps openai.StepLog
 	hold := openai.NewToolStream(plan.tools)
+	tools := newToolCallLog(s.log)
 
 	// A structured output has to be verified before it is delivered, so the
 	// answer is buffered rather than streamed. Streaming it and then reporting
@@ -77,7 +78,7 @@ func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, plan turnPla
 	bufferOnly := plan.format.Active()
 
 	result, err := s.manager.Prompt(r.Context(), plan.turn, func(u acp.SessionUpdate) error {
-		piece, thought, step := openai.FromUpdate(u)
+		piece, thought, step := tools.update(u)
 		steps.Add(step)
 		if thought != "" {
 			reasoning.WriteString(thought)
@@ -118,6 +119,7 @@ func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, plan turnPla
 	// Settle the hold: what is left is either the answer or a tool call.
 	rest, calls := hold.Finish()
 	calls = openai.LimitCalls(calls, plan.req.ParallelToolCalls)
+	tools.callerCalls(calls)
 	if rest != "" {
 		if allowed, _ := limit.Push(rest); allowed != "" {
 			text.WriteString(allowed)

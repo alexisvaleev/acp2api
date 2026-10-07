@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 )
 
 // turn streams a canned reply and answers the prompt request.
@@ -43,6 +44,9 @@ func (a *agent) turn(msg message) {
 		})
 	}
 
+	a.toolCall(sessionID)
+
+	delay := time.Duration(envInt("FAKE_AGENT_CHUNK_DELAY_MS", 0)) * time.Millisecond
 	for _, piece := range a.turnPieces(prompt) {
 		a.notify("session/update", map[string]any{
 			"sessionId": sessionID,
@@ -51,18 +55,23 @@ func (a *agent) turn(msg message) {
 				"content":       map[string]any{"type": "text", "text": piece},
 			},
 		})
+		if delay > 0 {
+			time.Sleep(delay)
+		}
 	}
 
 	if path := os.Getenv("FAKE_AGENT_READ_PATH"); path != "" {
-		_, _ = a.request("fs/read_text_file", map[string]any{"sessionId": sessionID, "path": path})
+		_, err := a.request("fs/read_text_file", map[string]any{"sessionId": sessionID, "path": path})
+		a.reportFs(sessionID, "read", err)
 	}
 
 	if path := os.Getenv("FAKE_AGENT_WRITE_PATH"); path != "" {
-		_, _ = a.request("fs/write_text_file", map[string]any{
+		_, err := a.request("fs/write_text_file", map[string]any{
 			"sessionId": sessionID,
 			"path":      path,
 			"content":   os.Getenv("FAKE_AGENT_WRITE_CONTENT"),
 		})
+		a.reportFs(sessionID, "write", err)
 	}
 
 	if os.Getenv("FAKE_AGENT_REQUEST_PERM") == "1" {
@@ -86,6 +95,63 @@ func (a *agent) turn(msg message) {
 		a.out.Flush()
 		os.Exit(0)
 	}
+}
+
+// reportFs appends the outcome of a filesystem call to the reply, when the test
+// asked for it.
+//
+// A refusal is otherwise invisible from the outside: a well-behaved agent
+// adapts and says nothing, which is correct behaviour and therefore impossible
+// to assert on. This makes the refusal observable without changing the agent's
+// cooperation.
+func (a *agent) reportFs(sessionID, what string, err error) {
+	if os.Getenv("FAKE_AGENT_FS_REPORT") != "1" {
+		return
+	}
+	outcome := "[" + what + "=ok]"
+	if err != nil {
+		outcome = "[" + what + "=" + err.Error() + "]"
+	}
+	a.notify("session/update", map[string]any{
+		"sessionId": sessionID,
+		"update": map[string]any{
+			"sessionUpdate": "agent_message_chunk",
+			"content":       map[string]any{"type": "text", "text": outcome},
+		},
+	})
+}
+
+// toolCall emits a tool_call and a tool_call_update when the test asked for one,
+// so the gateway's tool-call logging can be exercised. The tool is identified by
+// FAKE_AGENT_TOOL_NAME (programmatic, e.g. exec or mcp__github__create_issue)
+// and/or FAKE_AGENT_TOOL_TITLE.
+func (a *agent) toolCall(sessionID string) {
+	name := os.Getenv("FAKE_AGENT_TOOL_NAME")
+	title := os.Getenv("FAKE_AGENT_TOOL_TITLE")
+	if name == "" && title == "" {
+		return
+	}
+	a.notify("session/update", map[string]any{
+		"sessionId": sessionID,
+		"update": map[string]any{
+			"sessionUpdate": "tool_call",
+			"toolCallId":    "tc-1",
+			"name":          name,
+			"title":         title,
+			"kind":          os.Getenv("FAKE_AGENT_TOOL_KIND"),
+			"status":        "in_progress",
+			"rawInput":      map[string]any{"query": "files"},
+		},
+	})
+	a.notify("session/update", map[string]any{
+		"sessionId": sessionID,
+		"update": map[string]any{
+			"sessionUpdate": "tool_call_update",
+			"toolCallId":    "tc-1",
+			"status":        "completed",
+			"rawOutput":     map[string]any{"result": "ok"},
+		},
+	})
 }
 
 // thoughtPieces returns the reasoning deltas for one turn, emitted before the

@@ -30,12 +30,18 @@ request_timeout_seconds: 600
 # Closes idle sessions and agent processes. Negative disables reaping.
 session_ttl_seconds: 1800
 
-# Refuse filesystem writes for every agent, so they can read and reason but
-# change nothing. This is the switch that makes a coding agent behave like a
-# model provider: an agent that believes it can edit files will try. The write
-# capability is withheld at initialize as well, so a well-behaved agent never
-# even asks.
-read_only: false
+# The filesystem surface exposed to every agent: full, readonly or none. The
+# three levels nest, so this is one knob rather than a pair of switches.
+#
+#   full      serve reads and writes (the default)
+#   readonly  serve reads, refuse writes, so an agent can read and reason but
+#             change nothing. This is the switch that makes a coding agent
+#             behave like a model provider: an agent that believes it can edit
+#             files will try. The write capability is withheld at initialize as
+#             well, so a well-behaved agent never even asks.
+#   none      serve neither: the agent is told at initialize that the client has
+#             no filesystem, so it answers instead of exploring.
+filesystem: full
 
 # The session mode selected after opening a session. "plan" and "ask" are
 # read-only on most agents. The value is checked against what each agent
@@ -90,7 +96,7 @@ agents:
     # Anything global can be overridden per agent. The shape is the same:
     #
     #   workspace: /srv/other-repo     # this agent works elsewhere
-    #   read_only: true                # and may not write
+    #   filesystem: readonly           # and may not write
     #   mode: plan
     #
     # An agent may also carry its own proxy, which replaces the global one:

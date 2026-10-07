@@ -136,9 +136,10 @@ func (s *Server) shouldStore(req openai.ResponsesRequest) bool {
 func (s *Server) blockingResponse(w http.ResponseWriter, r *http.Request, plan responsePlan) {
 	var text strings.Builder
 	var steps openai.StepLog
+	tools := newToolCallLog(s.log)
 
 	result, err := s.manager.Prompt(r.Context(), plan.turn, func(u acp.SessionUpdate) error {
-		piece, _, step := openai.FromUpdate(u)
+		piece, _, step := tools.update(u)
 		text.WriteString(piece)
 		steps.Add(step)
 		return nil
@@ -155,6 +156,7 @@ func (s *Server) blockingResponse(w http.ResponseWriter, r *http.Request, plan r
 			calls, content = openai.LimitCalls(parsed, plan.req.ParallelToolCalls), ""
 		}
 	}
+	tools.callerCalls(calls)
 
 	items := outputItems(content, calls)
 	response := plan.build(result, items, steps, content)

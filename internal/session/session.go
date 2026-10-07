@@ -26,12 +26,45 @@ type state struct {
 	client  *acp.Client
 	handler *client.Handler
 
+	// turn is the session's single turn slot, holding one token while a turn
+	// runs. ACP gives a session one update stream, so two turns cannot share
+	// it: the second would take the first's updates and the first would return
+	// without its answer. The slot makes the second wait instead of corrupting.
+	turn chan struct{}
+
 	mu         sync.Mutex
 	updates    chan acp.SessionUpdate
 	abortErr   error
 	cancelTurn context.CancelFunc
 	lastUsed   time.Time
 }
+
+// newState builds a session with its turn slot ready.
+func newState(id string, cl *acp.Client, handler *client.Handler) *state {
+	return &state{
+		id:       id,
+		client:   cl,
+		handler:  handler,
+		turn:     make(chan struct{}, 1),
+		lastUsed: time.Now(),
+	}
+}
+
+// acquireTurn takes the session's turn slot, waiting for the turn in flight.
+//
+// The wait is bounded by the caller's context, so a client that has gone away
+// is not left queued behind a turn nobody is reading.
+func (s *state) acquireTurn(ctx context.Context) error {
+	select {
+	case s.turn <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// releaseTurn returns the turn slot.
+func (s *state) releaseTurn() { <-s.turn }
 
 // deliver queues one session update for the active consumer.
 //
@@ -81,10 +114,19 @@ func (s *state) idleFor() time.Duration {
 
 // run sends one prompt and streams the turn's updates to onUpdate.
 //
+// Turns on one session are serialised: the second waits for the first rather
+// than taking its update stream. Two conversations still run in parallel, each
+// on its own session.
+//
 // The prompt request runs on its own goroutine so updates can be delivered
 // while the turn is still in flight; without that, streaming would only start
 // once the agent had already finished.
 func (s *state) run(ctx context.Context, req Request, onUpdate func(acp.SessionUpdate) error) (string, error) {
+	if err := s.acquireTurn(ctx); err != nil {
+		return "", fmt.Errorf("session: wait for the turn in flight: %w", err)
+	}
+	defer s.releaseTurn()
+
 	content := req.Parts
 	if len(content) == 0 {
 		content = []acp.ContentBlock{acp.TextBlock(req.Prompt)}

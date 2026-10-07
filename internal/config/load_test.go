@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/quonaro/acp2api/internal/agent"
 	"github.com/quonaro/acp2api/internal/config"
 )
 
@@ -237,5 +238,99 @@ func TestLoadRejectsMalformedYAML(t *testing.T) {
 	}
 	if _, err := config.Load(path); err == nil {
 		t.Fatal("expected malformed YAML to be rejected")
+	}
+}
+
+func TestLoadReadsFilesystemMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	body := `
+filesystem: none
+agents:
+  - id: devin
+    command: devin
+    args: [acp]
+    filesystem: readonly
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Filesystem != agent.FilesystemNone {
+		t.Fatalf("filesystem = %q, want %q", cfg.Filesystem, agent.FilesystemNone)
+	}
+	if cfg.Agents[0].Filesystem != agent.FilesystemReadOnly {
+		t.Fatalf("agent filesystem = %q, want %q", cfg.Agents[0].Filesystem, agent.FilesystemReadOnly)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+// TestLoadRejectsAnUnknownKey is what makes the rename safe. `read_only` no
+// longer exists, and a configuration still carrying it must stop the process:
+// ignoring it would start the gateway with the filesystem wide open while the
+// operator believes it is shut.
+func TestLoadRejectsAnUnknownKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("read_only: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := config.Load(path)
+	if err == nil {
+		t.Fatal("expected the removed read_only key to be rejected")
+	}
+	if !strings.Contains(err.Error(), "read_only") {
+		t.Fatalf("the error should name the offending key: %v", err)
+	}
+}
+
+// TestShippedExampleConfigParses keeps config.example.yaml honest. It is what an
+// operator copies to config.yaml, so a rename that updates the code but not the
+// example hands them a file the strict parser rejects.
+func TestShippedExampleConfigParses(t *testing.T) {
+	cfg, err := config.Load(filepath.Join("..", "..", "config.example.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+// TestLoadAcceptsAnEmptyFile: a file of nothing but comments is not a mistake,
+// so the strict decoder must not turn the end of the document into an error.
+func TestLoadAcceptsAnEmptyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("# nothing configured yet\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Filesystem != agent.FilesystemFull {
+		t.Fatalf("filesystem = %q, want the default", cfg.Filesystem)
+	}
+}
+
+func TestLoadKeepsEnvironmentFilesystemOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("filesystem: full\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(config.EnvFilesystem, "none")
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Filesystem != agent.FilesystemNone {
+		t.Fatalf("filesystem = %q, the environment should win", cfg.Filesystem)
 	}
 }

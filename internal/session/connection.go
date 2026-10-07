@@ -310,10 +310,10 @@ func (c *connection) newSession(ctx context.Context, model string) (*state, erro
 	}
 
 	handler, err := client.New(client.Options{
-		Workspace: c.workspace,
-		Policy:    c.manager.opts.Policy,
-		OnWrite:   c.manager.opts.OnWrite,
-		ReadOnly:  c.agent.ReadOnly,
+		Workspace:  c.workspace,
+		Policy:     c.manager.opts.Policy,
+		OnWrite:    c.manager.opts.OnWrite,
+		Filesystem: client.Filesystem(c.agent.FilesystemMode()),
 	})
 	if err != nil {
 		return nil, err
@@ -323,7 +323,7 @@ func (c *connection) newSession(ctx context.Context, model string) (*state, erro
 	// so it is captured before anything tries to select one.
 	c.captureCatalog(res)
 
-	st := &state{id: res.SessionID, client: c.client, handler: handler, lastUsed: time.Now()}
+	st := newState(res.SessionID, c.client, handler)
 
 	if err := c.applyMode(ctx, res); err != nil {
 		return nil, err

@@ -21,6 +21,10 @@ OpenAI client ──HTTP/SSE──▶ gateway ──JSON-RPC over stdio──▶
 - The gateway is the ACP **client**; the CLI is the ACP **agent**.
 - An agent is a long-lived, stateful process — not a stateless model. One ACP
   process serves many sessions; a session is one conversation.
+- Sessions run in parallel, but **one session runs one turn at a time**: a
+  session has a single update stream, so a second turn on the same conversation
+  queues behind the first instead of taking its stream. ACP v1 cannot delete a
+  session, so the process, not the session, is what the manager reclaims.
 - The agent calls *back* into the gateway to read/write files, run commands, and
   ask permission. Those callbacks are the whole point; refusing them cripples
   the agent. See `internal/client/`.
@@ -40,10 +44,14 @@ OpenAI client ──HTTP/SSE──▶ gateway ──JSON-RPC over stdio──▶
 - `internal/openai/` — OpenAI types, the parameter policy, the tool-call
   envelope contract, and the ACP→OpenAI mapping.
 - `internal/handler/` — thin HTTP handlers and middleware.
-- `internal/config/` — config loading.
+- `internal/config/` — config loading: strict YAML, so an unknown key stops the
+  process instead of being silently ignored.
 - `internal/logger/` — the slog handler and console format for the process log:
   `LEVEL [module] | message | key=value`, module lifted from the `module`
-  attribute, level colored under `--verbose`.
+  attribute, level colored under `--verbose`. Tool calls are logged at debug
+  level as `tool_calling:<external|internal|from rest>`
+  (`internal/handler/toollog.go`): an MCP server the agent CLI wired in, one of
+  the agent's own tools, or a caller function relayed over REST.
 - `.github/workflows/` — CI (`ci.yml`) and the tag-triggered release
   (`release.yml`).
 - Deployment is not containerised for the gateway: it runs on the host
@@ -61,6 +69,11 @@ lota dev     # run the gateway in development mode (air: rebuild + restart)
 lota build   # produce bin/acp2api
 lota push    # push the current branch to GitHub
 ```
+
+`.air.toml` is the air configuration `lota dev` drives: build command,
+entrypoint, watched and excluded directories. `lota dev` forwards only its
+`addr`/`workspace`/`permission` flags, which air appends after the entrypoint's
+own arguments.
 
 Verification is plain Go:
 
@@ -110,8 +123,9 @@ the same check on every push to `main` and on pull requests.
 - **No real agents in tests.** Use the fake stdio agent fixture. No network, no
   API keys, no dependence on a real CLI being installed.
 - **Security is part of the feature.** fs paths are jailed to the workspace;
-  permissions run through an explicit policy; the server binds localhost and
-  requires a token by default.
+  the `filesystem` mode decides whether `fs/*` is served at all, and is withheld
+  at `initialize` as well as refused in the handler; permissions run through an
+  explicit policy; the server binds localhost and requires a token by default.
 - **Docs in the same change.** Behavior, config, or agent-support changes update
   this file and the README together.
 - **English** for code comments, commit messages, and rule files.

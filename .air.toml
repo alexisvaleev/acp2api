@@ -1,0 +1,21 @@
+#:schema https://json.schemastore.org/any.json
+
+# Air configuration for the acp2api dev loop. `lota dev` runs `air` with this
+# file; `air -- <serve flags>` runs the same loop without lota.
+#
+# Air rebuilds the gateway when a watched file changes and restarts it. `bin/`
+# and `workspace/` are excluded from the watcher: the agents write into the
+# workspace, and a rebuild per agent-written file would be a reload loop.
+
+root = "."
+tmp_dir = "bin"
+
+[build]
+# Build the gateway to the path the entrypoint runs.
+cmd = "go build -o ./bin/acp2api ./cmd/acp2api"
+# The binary plus the serve arguments that do not vary between runs. Anything
+# after `air --` is appended after these.
+entrypoint = ["./bin/acp2api"]
+args_bin = ["serve", "--config", "config.yaml", "--verbose"]
+include_file = ["config.yaml"]
+exclude_dir = ["assets", "tmp", "vendor", "testdata", "bin", "workspace", "reference", ".git"]

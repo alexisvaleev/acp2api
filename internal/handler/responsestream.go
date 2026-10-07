@@ -94,9 +94,10 @@ func (s *Server) streamResponse(w http.ResponseWriter, r *http.Request, plan res
 	hold := openai.NewToolStream(plan.tools)
 	var text strings.Builder
 	var steps openai.StepLog
+	tools := newToolCallLog(s.log)
 
 	result, err := s.manager.Prompt(r.Context(), plan.turn, func(u acp.SessionUpdate) error {
-		piece, _, step := openai.FromUpdate(u)
+		piece, _, step := tools.update(u)
 		steps.Add(step)
 		if piece == "" {
 			return nil
@@ -131,6 +132,7 @@ func (s *Server) streamResponse(w http.ResponseWriter, r *http.Request, plan res
 
 	rest, calls := hold.Finish()
 	calls = openai.LimitCalls(calls, plan.req.ParallelToolCalls)
+	tools.callerCalls(calls)
 	if rest != "" {
 		openMessage()
 		text.WriteString(rest)

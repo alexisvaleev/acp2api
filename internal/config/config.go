@@ -1,29 +1,17 @@
 // Package config loads the gateway's configuration.
 //
-// The format is JSON: the standard library already speaks it, so the gateway
-// keeps a zero-dependency build. Precedence is defaults, then the file, then
-// environment variables, then command-line flags.
+// The format is YAML, which is a superset of JSON, so an existing JSON config
+// keeps working. Precedence is defaults, then the file, then environment
+// variables, then command-line flags.
 package config
 
 import (
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/quonaro/acp2api/internal/agent"
-)
-
-// Environment variables that override file values.
-const (
-	EnvAddr       = "ACP2API_ADDR"
-	EnvToken      = "ACP2API_TOKEN"
-	EnvWorkspace  = "ACP2API_WORKSPACE"
-	EnvPermission = "ACP2API_PERMISSION"
 )
 
 // Defaults for the optional numeric fields.
@@ -38,7 +26,8 @@ type Config struct {
 	// Addr is the listen address. Defaults to loopback only.
 	Addr string `json:"addr" yaml:"addr"`
 	// Workspace is the default agent working directory. Empty means the
-	// process's working directory.
+	// process's working directory, except under FilesystemNone, where it means
+	// a private scratch directory.
 	Workspace string `json:"workspace" yaml:"workspace"`
 	// Token is the bearer token required on /v1/* routes. An empty token is
 	// only accepted together with AllowNoAuth.
@@ -59,10 +48,18 @@ type Config struct {
 	// Proxy routes the agents' outbound traffic. The gateway itself makes no
 	// outbound requests, so this exists for the agent CLIs.
 	Proxy ProxyConfig `json:"proxy" yaml:"proxy"`
-	// ReadOnly refuses filesystem writes for every agent, so they can read and
-	// reason but change nothing. This is the switch that makes a coding agent
-	// behave like a model provider.
-	ReadOnly bool `json:"read_only" yaml:"read_only"`
+	// Filesystem is the filesystem surface exposed to every agent: "full",
+	// "readonly" or "none".
+	//
+	// One knob rather than a boolean read-only switch, because the three levels
+	// nest and a pair of switches would allow a combination that means nothing.
+	//
+	// "none" is the provider-style mode: the agent is told at initialize that
+	// the client has no filesystem, and every fs/* call is refused. That
+	// removes the gateway's filesystem surface, not the agent process's own
+	// access to the host — an agent CLI is a real process with the operator's
+	// permissions. It is a contract with a cooperative agent, not a sandbox.
+	Filesystem string `json:"filesystem" yaml:"filesystem"`
 	// Mode is the session mode selected after opening a session, for every
 	// agent. "plan" and "ask" are read-only on most agents. The value is
 	// checked against what each agent advertises.
@@ -93,10 +90,9 @@ type AgentConfig struct {
 	// Proxy overrides the global proxy for this agent only. Absent inherits the
 	// global one; present replaces it, and an empty url sends this agent direct.
 	Proxy *ProxyConfig `json:"proxy" yaml:"proxy"`
-	// ReadOnly overrides the global setting for this agent. Absent inherits it;
-	// present sets it either way, which is why it is a pointer — a proxied
-	// deployment may still need one agent that can write.
-	ReadOnly *bool `json:"read_only" yaml:"read_only"`
+	// Filesystem overrides the global mode for this agent. Empty inherits it,
+	// which is also how a proxied deployment keeps one agent that can write.
+	Filesystem string `json:"filesystem" yaml:"filesystem"`
 	// Mode overrides the global mode for this agent. Empty inherits it.
 	Mode string `json:"mode" yaml:"mode"`
 	// Workspace overrides the global working directory for this agent. Empty
@@ -109,86 +105,10 @@ func Default() Config {
 	return Config{
 		Addr:                  DefaultAddr,
 		Permission:            "allow",
+		Filesystem:            agent.FilesystemFull,
 		RequestTimeoutSeconds: int(DefaultRequestTimeout / time.Second),
 		SessionTTLSeconds:     int(DefaultSessionTTL / time.Second),
 	}
-}
-
-// Load returns the default configuration merged with the file at path (when
-// non-empty) and the environment. It does not validate.
-//
-// The file is YAML. YAML is a superset of JSON, so an existing JSON config keeps
-// working through the same parser, and comments — which JSON does not allow —
-// are available in new ones.
-func Load(path string) (Config, error) {
-	cfg := Default()
-
-	if path != "" {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return Config{}, fmt.Errorf("config: read %s: %w", path, err)
-		}
-		expanded, err := expandEnv(string(data))
-		if err != nil {
-			return Config{}, fmt.Errorf("config: %s: %w", path, err)
-		}
-		if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
-			return Config{}, fmt.Errorf("config: parse %s: %w", path, err)
-		}
-	}
-
-	applyEnv(&cfg)
-	cfg.normalise()
-	return cfg, nil
-}
-
-// applyEnv overlays environment variables onto the configuration.
-func applyEnv(cfg *Config) {
-	if v := os.Getenv(EnvAddr); v != "" {
-		cfg.Addr = v
-	}
-	if v := os.Getenv(EnvToken); v != "" {
-		cfg.Token = v
-	}
-	if v := os.Getenv(EnvWorkspace); v != "" {
-		cfg.Workspace = v
-	}
-	if v := os.Getenv(EnvPermission); v != "" {
-		cfg.Permission = v
-	}
-}
-
-// normalise fills in defaults and cleans paths.
-func (c *Config) normalise() {
-	if c.Addr == "" {
-		c.Addr = DefaultAddr
-	}
-	if c.Permission == "" {
-		c.Permission = "allow"
-	}
-	if c.RequestTimeoutSeconds == 0 {
-		c.RequestTimeoutSeconds = int(DefaultRequestTimeout / time.Second)
-	}
-	if c.SessionTTLSeconds == 0 {
-		c.SessionTTLSeconds = int(DefaultSessionTTL / time.Second)
-	}
-	if c.Workspace != "" {
-		c.Workspace = absolute(c.Workspace)
-	}
-	for i := range c.Agents {
-		if c.Agents[i].Workspace != "" {
-			c.Agents[i].Workspace = absolute(c.Agents[i].Workspace)
-		}
-	}
-}
-
-// absolute resolves a path against the process working directory, leaving it
-// alone when it cannot be resolved.
-func absolute(path string) string {
-	if abs, err := filepath.Abs(path); err == nil {
-		return abs
-	}
-	return path
 }
 
 // RequestTimeout returns the per-request ACP timeout.
@@ -217,12 +137,24 @@ func (c Config) Validate() error {
 	default:
 		return fmt.Errorf("config: permission must be \"allow\" or \"deny\", got %q", c.Permission)
 	}
+	switch c.Filesystem {
+	case agent.FilesystemFull, agent.FilesystemReadOnly, agent.FilesystemNone:
+	default:
+		return fmt.Errorf("config: filesystem must be %q, %q or %q, got %q",
+			agent.FilesystemFull, agent.FilesystemReadOnly, agent.FilesystemNone, c.Filesystem)
+	}
 	for _, a := range c.Agents {
 		if strings.TrimSpace(a.ID) == "" {
 			return errors.New("config: every agent needs an id")
 		}
 		if strings.TrimSpace(a.Command) == "" {
 			return fmt.Errorf("config: agent %q needs a command", a.ID)
+		}
+		switch a.Filesystem {
+		case "", agent.FilesystemFull, agent.FilesystemReadOnly, agent.FilesystemNone:
+		default:
+			return fmt.Errorf("config: agent %q has filesystem %q; want %q, %q or %q",
+				a.ID, a.Filesystem, agent.FilesystemFull, agent.FilesystemReadOnly, agent.FilesystemNone)
 		}
 		switch a.CredentialSource {
 		case "", agent.CredentialAuto, agent.CredentialEnv,
@@ -281,11 +213,11 @@ func (c Config) Registry() (*agent.Registry, error) {
 	if !c.DisableBuiltins {
 		agents = agent.Builtins()
 	}
-	// The proxy, read-only and mode are global, so they reach built-ins too —
+	// The proxy, filesystem and mode are global, so they reach built-ins too —
 	// not only the agents a configuration happens to name.
 	for i := range agents {
 		agents[i].Env = mergeEnv(proxyEnv, agents[i].Env)
-		agents[i].ReadOnly = c.ReadOnly
+		agents[i].Filesystem = c.Filesystem
 		agents[i].Mode = c.Mode
 		agents[i].Workspace = c.Workspace
 	}
@@ -305,9 +237,9 @@ func (c Config) Registry() (*agent.Registry, error) {
 			proxy = *configured.Proxy
 		}
 
-		readOnly := c.ReadOnly
-		if configured.ReadOnly != nil {
-			readOnly = *configured.ReadOnly
+		filesystem := configured.Filesystem
+		if filesystem == "" {
+			filesystem = c.Filesystem
 		}
 		mode := configured.Mode
 		if mode == "" {
@@ -327,7 +259,7 @@ func (c Config) Registry() (*agent.Registry, error) {
 			AuthMethod:       configured.AuthMethod,
 			APIKeyEnv:        configured.APIKeyEnv,
 			CredentialSource: configured.CredentialSource,
-			ReadOnly:         readOnly,
+			Filesystem:       filesystem,
 			Mode:             mode,
 			Workspace:        workspace,
 		}

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/quonaro/acp2api/internal/agent"
 	"github.com/quonaro/acp2api/internal/config"
 )
 
@@ -317,23 +318,22 @@ func TestGlobalWorkspaceReachesBuiltins(t *testing.T) {
 	}
 }
 
-func TestGlobalReadOnlyReachesBuiltinsAndIsOverridable(t *testing.T) {
+func TestGlobalFilesystemReachesBuiltinsAndIsOverridable(t *testing.T) {
 	cfg := config.Default()
-	cfg.ReadOnly = true
-	no := false
-	cfg.Agents = []config.AgentConfig{{ID: "opencode", Command: "opencode", ReadOnly: &no}}
+	cfg.Filesystem = agent.FilesystemReadOnly
+	cfg.Agents = []config.AgentConfig{{ID: "opencode", Command: "opencode", Filesystem: agent.FilesystemNone}}
 
 	registry, err := cfg.Registry()
 	if err != nil {
 		t.Fatal(err)
 	}
 	devin, _ := registry.Get("devin")
-	if !devin.ReadOnly {
-		t.Fatal("the global read_only should reach a built-in")
+	if devin.FilesystemMode() != agent.FilesystemReadOnly {
+		t.Fatalf("the global mode should reach a built-in, got %q", devin.FilesystemMode())
 	}
 	opencode, _ := registry.Get("opencode")
-	if opencode.ReadOnly {
-		t.Fatal("a per-agent override should win")
+	if opencode.FilesystemMode() != agent.FilesystemNone {
+		t.Fatalf("a per-agent override should win, got %q", opencode.FilesystemMode())
 	}
 }
 

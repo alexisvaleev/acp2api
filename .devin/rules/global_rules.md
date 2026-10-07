@@ -23,7 +23,8 @@ subprocess and translates the conversation to ACP JSON-RPC over stdio.
 - `internal/session/` — conversation ↔ ACP session mapping and process lifecycle.
 - `internal/openai/` — OpenAI request/response/SSE types and the ACP→OpenAI mapping.
 - `internal/handler/` — thin HTTP handlers. No protocol details leak here.
-- `internal/config/` — config file + env loading and validation.
+- `internal/config/` — config file + env loading and validation. Parsing is
+  strict: an unknown key is an error, never silently ignored.
 
 ## Layers and dependency direction
 
@@ -58,7 +59,10 @@ Agent-specific knowledge never enters the core. It lives in
 - **No real agents in tests.** Use a fake stdio agent (a Go test binary or a
   script fixture). No network, no API keys, no real CLI on `PATH`.
 - **Security is a feature, not a follow-up.** Every `fs/*` path is jailed to the
-  session workspace; every permission request goes through an explicit policy;
+  session workspace; the `filesystem` mode (`full`/`readonly`/`none`) decides
+  whether `fs/*` is served, is withheld at `initialize` and refused in the
+  handler, and an unrecognised mode fails closed; every permission request goes
+  through an explicit policy;
   the server binds `127.0.0.1` and requires a token unless explicitly disabled.
 - **Docs move with the code.** Behavior, config, or agent-support changes update
   `AGENTS.md` and the README in the same change.

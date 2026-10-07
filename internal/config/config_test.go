@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/quonaro/acp2api/internal/agent"
 	"github.com/quonaro/acp2api/internal/config"
 )
 
@@ -15,6 +16,30 @@ func TestDefaultIsLoopbackAndValid(t *testing.T) {
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("the default configuration must validate: %v", err)
+	}
+}
+
+// TestDefaultFilesystemIsFull: the gateway has always given agents the
+// filesystem, and nothing about the mode should change that by omission.
+func TestDefaultFilesystemIsFull(t *testing.T) {
+	if got := config.Default().Filesystem; got != agent.FilesystemFull {
+		t.Fatalf("filesystem = %q, want %q", got, agent.FilesystemFull)
+	}
+}
+
+func TestValidateRejectsUnknownFilesystem(t *testing.T) {
+	cfg := config.Default()
+	cfg.Filesystem = "read-only"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected an unknown filesystem mode to be refused")
+	}
+}
+
+func TestValidateRejectsUnknownAgentFilesystem(t *testing.T) {
+	cfg := config.Default()
+	cfg.Agents = []config.AgentConfig{{ID: "x", Command: "x", Filesystem: "read-only"}}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected an unknown per-agent filesystem mode to be refused")
 	}
 }
 

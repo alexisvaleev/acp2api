@@ -43,11 +43,15 @@ type Agent struct {
 	//   interactive never send a key; let the agent prompt, browser included
 	//   none        never authenticate
 	CredentialSource string
-	// ReadOnly refuses filesystem writes, so the agent can read and reason but
-	// change nothing. It also drops the write capability from initialize:
-	// advertising a capability we then refuse would be a lie, and the agent
-	// would spend a turn discovering it.
-	ReadOnly bool
+	// Filesystem is the filesystem surface the gateway exposes to this agent:
+	// "full", "readonly" or "none". Empty means full.
+	//
+	// One knob rather than a boolean because the three levels nest — "none"
+	// implies "readonly" — and a pair of switches would allow a combination
+	// that means nothing. It also decides the capabilities advertised at
+	// initialize: advertising a capability we then refuse would be a lie, and
+	// the agent would spend a turn discovering it.
+	Filesystem string
 	// Mode is the session mode to select after opening a session, such as
 	// "plan" or "ask". Empty leaves whatever the agent defaults to.
 	Mode string
@@ -69,6 +73,35 @@ const (
 	CredentialInteractive = "interactive"
 	CredentialNone        = "none"
 )
+
+// Filesystem access granted to an agent. See Agent.Filesystem.
+const (
+	// FilesystemFull serves reads and writes.
+	FilesystemFull = "full"
+	// FilesystemReadOnly serves reads and refuses writes.
+	FilesystemReadOnly = "readonly"
+	// FilesystemNone serves neither: the agent has no filesystem at all.
+	FilesystemNone = "none"
+)
+
+// FilesystemMode returns the agent's filesystem mode.
+//
+// An unset mode is full, which is what an operator who never mentioned the
+// filesystem means. An unrecognised one is none: a typo must not hand the agent
+// the filesystem. Configuration validation rejects such a value before a
+// request is served, so this is the second line of defence.
+func (a Agent) FilesystemMode() string {
+	switch a.Filesystem {
+	case FilesystemReadOnly:
+		return FilesystemReadOnly
+	case FilesystemNone:
+		return FilesystemNone
+	case "", FilesystemFull:
+		return FilesystemFull
+	default:
+		return FilesystemNone
+	}
+}
 
 // CredentialMode returns the agent's credential source, defaulting to auto.
 func (a Agent) CredentialMode() string {
@@ -98,10 +131,14 @@ func (a Agent) Capabilities() map[string]any {
 	if a.ClientCapabilities != nil {
 		return a.ClientCapabilities
 	}
-	if a.ReadOnly {
+	switch a.FilesystemMode() {
+	case FilesystemNone:
+		return NoFilesystemCapabilities()
+	case FilesystemReadOnly:
 		return ReadOnlyCapabilities()
+	default:
+		return DefaultCapabilities()
 	}
-	return DefaultCapabilities()
 }
 
 // HasKey reports whether a credential was resolved for this agent.
@@ -129,6 +166,26 @@ func ReadOnlyCapabilities() map[string]any {
 	return map[string]any{
 		"fs": map[string]any{
 			"readTextFile":  true,
+			"writeTextFile": false,
+		},
+	}
+}
+
+// NoFilesystemCapabilities advertises no filesystem at all.
+//
+// This pair of false values is ACP's own default for clientCapabilities, and
+// the spec is explicit that an agent MUST NOT call a filesystem method whose
+// capability is false or absent. Stating it rather than omitting the key keeps
+// the handshake unambiguous: the agent is told the client has no filesystem,
+// instead of being left to guess whether the client forgot to describe itself.
+//
+// It removes the gateway's filesystem surface, not the agent process's own
+// access to the host — an agent CLI is a real process with the operator's
+// permissions. It is a contract with a cooperative agent, not a sandbox.
+func NoFilesystemCapabilities() map[string]any {
+	return map[string]any{
+		"fs": map[string]any{
+			"readTextFile":  false,
 			"writeTextFile": false,
 		},
 	}

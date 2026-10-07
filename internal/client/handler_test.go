@@ -160,7 +160,7 @@ func TestHandleTerminalIsRefused(t *testing.T) {
 
 func TestReadOnlyHandlerRefusesWrites(t *testing.T) {
 	root := t.TempDir()
-	h, err := New(Options{Workspace: root, Policy: AllowAll(), ReadOnly: true})
+	h, err := New(Options{Workspace: root, Policy: AllowAll(), Filesystem: FilesystemReadOnly})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestReadOnlyHandlerStillReads(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("readable"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h, err := New(Options{Workspace: root, Policy: AllowAll(), ReadOnly: true})
+	h, err := New(Options{Workspace: root, Policy: AllowAll(), Filesystem: FilesystemReadOnly})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,6 +201,113 @@ func TestReadOnlyHandlerStillReads(t *testing.T) {
 	}
 	if result.(acp.ReadTextFileResponse).Content != "readable" {
 		t.Fatalf("content = %q", result.(acp.ReadTextFileResponse).Content)
+	}
+}
+
+// TestNoFilesystemHandlerRefusesReadsAndWrites covers the provider-style mode:
+// the handler is the second line of defence behind the capabilities, and the
+// one that holds against an agent that asks anyway.
+func TestNoFilesystemHandlerRefusesReadsAndWrites(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h, err := New(Options{Workspace: root, Policy: AllowAll(), Filesystem: FilesystemNone})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = h.Handle(context.Background(), acp.MethodReadTextFile, mustJSON(t, acp.ReadTextFileRequest{
+		SessionID: "s1", Path: "a.txt",
+	}))
+	var rpcErr *acp.Error
+	if !errors.As(err, &rpcErr) || rpcErr.Code != acp.CodeMethodNotFound {
+		t.Fatalf("read error = %v, want method not found", err)
+	}
+
+	_, err = h.Handle(context.Background(), acp.MethodWriteTextFile, mustJSON(t, acp.WriteTextFileRequest{
+		SessionID: "s1", Path: "nope.txt", Content: "nope",
+	}))
+	if !errors.As(err, &rpcErr) || rpcErr.Code != acp.CodeMethodNotFound {
+		t.Fatalf("write error = %v, want method not found", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "nope.txt")); statErr == nil {
+		t.Fatal("the file was written anyway")
+	}
+}
+
+// TestNoFilesystemHandlerStillServesPermissions: only the filesystem is gone.
+// An agent that cannot ask permission could not run at all.
+func TestNoFilesystemHandlerStillServesPermissions(t *testing.T) {
+	h, err := New(Options{Workspace: t.TempDir(), Policy: DenyAll(), Filesystem: FilesystemNone})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := h.Handle(context.Background(), acp.MethodRequestPerm, mustJSON(t, acp.RequestPermissionRequest{
+		SessionID: "s1",
+		Options: []acp.PermissionOption{
+			{OptionID: "yes", Kind: acp.PermAllowOnce},
+			{OptionID: "no", Kind: acp.PermRejectOnce},
+		},
+	}))
+	if err != nil {
+		t.Fatalf("permission: %v", err)
+	}
+	if result.(acp.RequestPermissionResponse).Outcome.OptionID != "no" {
+		t.Fatalf("outcome = %+v", result)
+	}
+}
+
+func TestParseFilesystem(t *testing.T) {
+	tests := []struct {
+		name    string
+		want    Filesystem
+		wantErr bool
+	}{
+		{name: "", want: FilesystemFull},
+		{name: "full", want: FilesystemFull},
+		{name: "readonly", want: FilesystemReadOnly},
+		{name: "none", want: FilesystemNone},
+		{name: "read-only", wantErr: true},
+		{name: "FULL", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParseFilesystem(tc.name)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("ParseFilesystem(%q) succeeded, want error", tc.name)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseFilesystem(%q): %v", tc.name, err)
+			}
+			if got != tc.want {
+				t.Fatalf("ParseFilesystem(%q) = %q, want %q", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestNewRejectsUnknownFilesystem: a handler must not fall back to full when
+// the mode is unreadable, or a typo in configuration would silently restore
+// the access the operator was taking away.
+func TestNewRejectsUnknownFilesystem(t *testing.T) {
+	if _, err := New(Options{Workspace: t.TempDir(), Filesystem: "read-only"}); err == nil {
+		t.Fatal("expected an unknown filesystem mode to fail")
+	}
+}
+
+// TestNewDefaultsToFull is the control: the zero value keeps the old behaviour.
+func TestNewDefaultsToFull(t *testing.T) {
+	h, err := New(Options{Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !h.filesystem.reads() || !h.filesystem.writes() {
+		t.Fatalf("filesystem = %q, want full", h.filesystem)
 	}
 }
 

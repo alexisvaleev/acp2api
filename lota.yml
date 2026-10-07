@@ -1,7 +1,6 @@
 shell: bash
 
 vars:
-- BINARY=acp2api
 - PKG=./cmd/acp2api
 - OUT=bin/acp2api
 - LDFLAGS=-s -w
@@ -14,12 +13,10 @@ dev:
   - workspace|w:str=.
   - permission|p:str=allow
   script: |
-    air \
-      -tmp_dir "bin" \
-      -build.cmd "go build -o ./bin/$BINARY $PKG" \
-      -build.entrypoint "./bin/$BINARY" \
-      -build.args_bin "serve --config config.yaml --addr $addr --workspace $workspace --permission $permission --verbose" \
-      -build.exclude_dir "assets,tmp,vendor,testdata,bin,workspace,reference,.git"
+    air -c .air.toml -- \
+      --addr $addr \
+      --workspace $workspace \
+      --permission $permission
 
 build:
   desc: Build the gateway binary

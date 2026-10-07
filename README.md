@@ -33,11 +33,15 @@ lota dev --addr 127.0.0.1:9000
 lota dev -p deny                      # reject every permission request
 ```
 
-`lota dev` runs the gateway through [air](https://github.com/air-verse/air):
-it reads `config.yaml`, builds to `bin/acp2api`, and rebuilds and restarts the
-gateway whenever a `.go` file changes. `bin/` and `workspace/` are excluded
-from the watcher — the agents write into the workspace, and a rebuild per
-agent-written file would be a reload loop.
+`lota dev` runs the gateway through [air](https://github.com/air-verse/air),
+configured by `.air.toml`: it builds to `bin/acp2api` and rebuilds and restarts
+the gateway whenever a watched file changes. `bin/` and `workspace/` are
+excluded from the watcher — the agents write into the workspace, and a rebuild
+per agent-written file would be a reload loop.
+
+`lota dev` forwards only its `-w`, `--addr` and `-p` flags to `serve`; the build
+command, entrypoint and watched/excluded directories live in `.air.toml`, so
+`air -- --workspace ~/code/some-repo` runs the same loop without `lota`.
 
 Without `lota`, the binary is ordinary:
 
@@ -64,6 +68,26 @@ INFO [session] | agent ready | agent=devin pid=91240 workspace=. images=true
 The subsystem — `acp2api`, `session`, `agent`, `acp`, `handler` — is shown in
 brackets, followed by the message and its `key=value` attributes. `--verbose` on
 `serve` adds debug records and colors the level name.
+
+Tool calls are logged under their own subsystem, one line per call, split by
+where the tool lives:
+
+```text
+DEBUG [tool_calling:external] | tool_call | tool_call_id=tc-1 name=mcp__github__create_issue title="Create issue" kind=other status=in_progress
+DEBUG [tool_calling:internal] | tool_call | tool_call_id=tc-2 name=exec title="Run the tests" kind=execute status=in_progress
+DEBUG [tool_calling:from rest] | tool_call | tool_call_id=call_get_weather_1 name=get_weather arguments={"city":"Paris"}
+```
+
+- `external` — an MCP server wired into the agent CLI itself. Recognised by the
+  `mcp__<server>__<tool>` namespace on the tool's programmatic name, falling back
+  to the title when the agent reports no name.
+- `internal` — one of the agent's own built-in tools (`exec`, `edit`, …).
+- `from rest` — a caller-declared function the gateway relays back over the
+  OpenAI API.
+
+A `tool_call_update` is a patch keyed by id and usually omits the name, so it
+inherits the classification its initial `tool_call` established. These records
+are debug level, so they appear only under `--verbose`.
 
 ### Quick start
 
@@ -222,6 +246,30 @@ An ACP session is stateful, which the OpenAI request shape does not express.
 `user` is accepted as a fallback conversation key for clients that cannot set a
 custom field.
 
+### Concurrency
+
+One agent process serves many sessions, so **different conversations run in
+parallel**: nothing in the gateway serialises them, and the agent CLI is free to
+run them at once. Measured against the Devin CLI on `swe-2-high`, six concurrent
+conversations finished in the time of one.
+
+**One conversation does not parallelise.** A session has a single update stream
+and a single history, so two turns on the same `conversation_id` are queued: the
+second waits for the first, then runs and gets its own answer. It is not allowed
+to take the first turn's stream, which is what would otherwise truncate one
+answer and leak its text into the other. A request that gives up while queued
+fails with its own context error rather than running late.
+
+The trade-off to plan for: the wait counts against the queued request's own
+timeout, so a client that fires two messages into one conversation at once can
+see the second time out behind a long first one.
+
+Sessions are never deleted — ACP v1 has no `session/delete`. The gateway forgets
+an idle session, but the CLI holds it until the process exits, and a connection
+is only reclaimed once it has no sessions and has itself gone idle
+(`session_ttl_seconds`). A client that never sends `conversation_id` therefore
+grows the agent's session count one request at a time.
+
 ## Parameter policy
 
 No parameter is silently ignored. Every OpenAI parameter is either honoured,
@@ -364,38 +412,62 @@ expanded.
 | Key | Default | Notes |
 | --- | ------- | ----- |
 | `addr` | `127.0.0.1:8720` | Listen address. Binding off-loopback requires a token. |
-| `workspace` | process cwd | Default agent working directory. |
+| `workspace` | process cwd | Default agent working directory. Under `filesystem: none` the default is a private scratch directory instead. |
 | `token` | — | Bearer token for `/v1/*`. |
 | `permission` | `allow` | `allow` or `deny` for agent permission requests. |
 | `request_timeout_seconds` | `120` | Bounds one ACP request. |
 | `session_ttl_seconds` | `1800` | Idle sessions and agent processes are reaped. Negative disables. |
 | `agents` | built-ins | Overrides by id, or new agents. |
 | `disable_builtins` | `false` | `true` serves only the agents listed above, so `/v1/models` matches what the host can run. |
-| `read_only` | `false` | Refuses filesystem writes, and withholds the write capability at `initialize`. |
+| `filesystem` | `full` | `full`, `readonly` or `none`. Decides what `fs/*` callbacks are served, and which capabilities are advertised at `initialize`. |
 | `mode` | agent default | Session mode selected after opening a session, e.g. `plan` or `ask`. Checked against what the agent advertises. |
 | `proxy` | none | Routes the agents' outbound traffic; `url`, optional `http`/`https`/`no_proxy`. |
 | `discover_models` | `false` | Read each agent's model catalog in the background at startup, so `/v1/models` lists models as well as agents. |
 
-Every agent entry may override `workspace`, `read_only`, `mode` and `proxy`, and
+Every agent entry may override `workspace`, `filesystem`, `mode` and `proxy`, and
 may add its own `env`. A per-agent proxy or workspace replaces the global one
 rather than merging with it.
 
-### Read-only, and what a workspace is for
+The file is parsed strictly: an unknown key is an error at startup, not a
+warning. A typo — or a key a previous version had — must not quietly change what
+the gateway does.
+
+### The filesystem mode, and what a workspace is for
 
 An ACP agent is not a model. It is a process with tools, and it uses them: ask
 it about the weather and it may still look around the directory it was started
-in. So for provider-style use, point `workspace` at a scratch directory, and set
-`read_only: true` — that refuses `fs/write_text_file` outright and drops the
-capability from the handshake, so the agent cannot write whether it wants to or
-not. `permission: deny` does **not** cover this: permission requests and
-filesystem callbacks are separate paths.
+in. `filesystem` decides how much of that the gateway will do on its behalf, in
+three levels that nest:
 
-`mode` is the second lever, and it works on the agent's side: `plan` and `ask`
-are read-only on most agents. Unlike `read_only`, it depends on the agent
+| Mode | `fs/read_text_file` | `fs/write_text_file` |
+| ---- | ------------------- | -------------------- |
+| `full` | served | served |
+| `readonly` | served | refused |
+| `none` | refused | refused |
+
+The capability is dropped from the `initialize` handshake as well, so a
+well-behaved agent never asks. The refusal in the handler is what answers the
+ones that ask anyway, and it is the line that holds, because it does not depend
+on the agent's cooperation. `permission: deny` does **not** cover this:
+permission requests and filesystem callbacks are separate paths.
+
+`none` is the provider-style mode: the agent is told the client has no
+filesystem, so it answers instead of exploring. With `workspace` unset it also
+gets a private scratch directory as its working directory — created at startup
+and removed at exit — instead of the process's own directory, which would
+otherwise be the project the operator was withholding.
+
+Be clear about what `none` is. It removes the **gateway's** filesystem surface,
+not the agent process's own access to the host: an agent CLI is a real process
+running with the operator's permissions. It is a contract with a cooperative
+agent, not a sandbox.
+
+`mode` is the third lever, and it works on the agent's side: `plan` and `ask`
+are read-only on most agents. Unlike `filesystem`, it depends on the agent
 cooperating, which is why both exist.
 
 Environment: `ACP2API_ADDR`, `ACP2API_TOKEN`, `ACP2API_WORKSPACE`,
-`ACP2API_PERMISSION`.
+`ACP2API_PERMISSION`, `ACP2API_FILESYSTEM`.
 
 ## Agent authentication
 
@@ -479,6 +551,11 @@ An agent with filesystem access is remote code execution with extra steps, so:
 - **Filesystem jail.** Every `fs/read_text_file` and `fs/write_text_file` path is
   resolved and confined to the session workspace. Symlinks are resolved before
   the containment check, so a link cannot be used to escape.
+- **A filesystem mode, chosen up front.** `filesystem` is `full`, `readonly` or
+  `none`. The capability is withheld at `initialize` *and* the call is refused,
+  so the agent is neither misled nor trusted. `none` removes the surface
+  entirely and gives the agent a private scratch directory instead of the
+  process's own.
 - **Explicit permission policy.** `permission: allow` picks a one-shot allow
   option; `deny` picks a reject option or cancels. There is no "ask" — a headless
   gateway has nobody to ask.

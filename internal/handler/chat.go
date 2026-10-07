@@ -167,9 +167,10 @@ func (s *Server) runTurn(r *http.Request, plan turnPlan, prompt string, keepPart
 	var text strings.Builder
 	var reasoning strings.Builder
 	var steps openai.StepLog
+	tools := newToolCallLog(s.log)
 
 	result, err := s.manager.Prompt(r.Context(), turn, func(u acp.SessionUpdate) error {
-		piece, thought, step := openai.FromUpdate(u)
+		piece, thought, step := tools.update(u)
 		steps.Add(step)
 		reasoning.WriteString(thought)
 		if piece == "" {
@@ -199,6 +200,7 @@ func (s *Server) runTurn(r *http.Request, plan turnPlan, prompt string, keepPart
 			out.text = ""
 		}
 	}
+	tools.callerCalls(out.calls)
 	return out, nil
 }
 

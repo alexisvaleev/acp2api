@@ -54,7 +54,19 @@ func runServer(ctx context.Context, nctx engine.NativeContext) error {
 		return err
 	}
 
+	// A session still needs a working directory for session/new, even when the
+	// agent is given no filesystem. Pointing it at the process's own directory
+	// would hand the agent the very project the operator was withholding, so an
+	// empty scratch root is created instead — and removed on the way out.
 	workspaceDir := cfg.Workspace
+	if workspaceDir == "" && cfg.Filesystem == agent.FilesystemNone {
+		scratch, err := os.MkdirTemp("", "acp2api-scratch-")
+		if err != nil {
+			return fmt.Errorf("acp2api: create scratch workspace: %w", err)
+		}
+		defer func() { _ = os.RemoveAll(scratch) }()
+		workspaceDir = scratch
+	}
 	if workspaceDir == "" {
 		if wd, err := os.Getwd(); err == nil {
 			workspaceDir = wd

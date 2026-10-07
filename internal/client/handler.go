@@ -24,21 +24,22 @@ type Options struct {
 	// OnWrite, if set, is notified after a file is written, with the previous
 	// and new content. Used for change tracking.
 	OnWrite func(path, oldContent, newContent string)
-	// ReadOnly refuses fs/write_text_file.
+	// Filesystem is the filesystem surface to expose: "full", "readonly" or
+	// "none". Empty means full.
 	//
-	// The write capability is also withheld at initialize, so a well-behaved
-	// agent never asks. This is the second line of defence for the ones that ask
-	// anyway — and it is the line that actually holds, because it does not
-	// depend on the agent's cooperation.
-	ReadOnly bool
+	// It is the second line of defence, and the one that holds. The capability
+	// is also withheld at initialize, so a well-behaved agent never asks; this
+	// is what answers the ones that ask anyway, because it does not depend on
+	// the agent's cooperation.
+	Filesystem Filesystem
 }
 
 // Handler answers agent→client requests for one session.
 type Handler struct {
-	workspace string
-	policy    Policy
-	onWrite   func(path, oldContent, newContent string)
-	readOnly  bool
+	workspace  string
+	policy     Policy
+	onWrite    func(path, oldContent, newContent string)
+	filesystem Filesystem
 }
 
 // New resolves the workspace and returns a handler.
@@ -47,11 +48,15 @@ func New(opts Options) (*Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	filesystem, err := opts.Filesystem.normalise()
+	if err != nil {
+		return nil, err
+	}
 	return &Handler{
-		workspace: workspace,
-		policy:    opts.Policy,
-		onWrite:   opts.OnWrite,
-		readOnly:  opts.ReadOnly,
+		workspace:  workspace,
+		policy:     opts.Policy,
+		onWrite:    opts.OnWrite,
+		filesystem: filesystem,
 	}, nil
 }
 
@@ -62,15 +67,13 @@ func (h *Handler) Workspace() string { return h.workspace }
 func (h *Handler) Handle(ctx context.Context, method string, params json.RawMessage) (any, error) {
 	switch method {
 	case acp.MethodReadTextFile:
+		if !h.filesystem.reads() {
+			return nil, h.unsupported(method)
+		}
 		return h.readFile(params)
 	case acp.MethodWriteTextFile:
-		if h.readOnly {
-			// The same code the terminal gets: "this client does not do that",
-			// which is true, and which an agent handles by adapting.
-			return nil, &acp.Error{
-				Code:    acp.CodeMethodNotFound,
-				Message: "this client is read-only: fs/write_text_file is refused",
-			}
+		if !h.filesystem.writes() {
+			return nil, h.unsupported(method)
 		}
 		return h.writeFile(params)
 	case acp.MethodRequestPerm:
@@ -83,6 +86,17 @@ func (h *Handler) Handle(ctx context.Context, method string, params json.RawMess
 			Code:    acp.CodeMethodNotFound,
 			Message: fmt.Sprintf("method %q is not supported by this client", method),
 		}
+	}
+}
+
+// unsupported reports a method this handler deliberately does not serve.
+//
+// The code is the terminal's: "this client does not do that", which is true,
+// and which an agent handles by adapting.
+func (h *Handler) unsupported(method string) *acp.Error {
+	return &acp.Error{
+		Code:    acp.CodeMethodNotFound,
+		Message: fmt.Sprintf("this client does not serve %s: filesystem is %q", method, h.filesystem),
 	}
 }
 

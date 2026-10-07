@@ -67,8 +67,8 @@ func TestRegisterOverridesWithoutDuplicating(t *testing.T) {
 	}
 }
 
-func TestReadOnlyAgentWithholdsTheWriteCapability(t *testing.T) {
-	caps := (Agent{ID: "x", ReadOnly: true}).Capabilities()
+func TestFilesystemReadOnlyWithholdsTheWriteCapability(t *testing.T) {
+	caps := (Agent{ID: "x", Filesystem: FilesystemReadOnly}).Capabilities()
 	fs, ok := caps["fs"].(map[string]any)
 	if !ok {
 		t.Fatalf("capabilities.fs missing: %#v", caps)
@@ -83,12 +83,40 @@ func TestReadOnlyAgentWithholdsTheWriteCapability(t *testing.T) {
 	}
 }
 
-func TestExplicitCapabilitiesWinOverReadOnly(t *testing.T) {
+// TestFilesystemNoneAdvertisesNothing is the provider-style mode: the agent is
+// told the client has no filesystem, so it answers rather than looking around.
+func TestFilesystemNoneAdvertisesNothing(t *testing.T) {
+	caps := (Agent{ID: "x", Filesystem: FilesystemNone}).Capabilities()
+	fs, ok := caps["fs"].(map[string]any)
+	if !ok {
+		t.Fatalf("capabilities.fs missing: %#v", caps)
+	}
+	if fs["readTextFile"] != false || fs["writeTextFile"] != false {
+		t.Fatalf("no filesystem should be advertised, got %#v", fs)
+	}
+}
+
+func TestExplicitCapabilitiesWinOverFilesystem(t *testing.T) {
 	// An operator who sets capabilities explicitly meant it.
 	explicit := map[string]any{"fs": map[string]any{"readTextFile": true, "writeTextFile": true}}
-	caps := (Agent{ID: "x", ReadOnly: true, ClientCapabilities: explicit}).Capabilities()
+	caps := (Agent{ID: "x", Filesystem: FilesystemNone, ClientCapabilities: explicit}).Capabilities()
 	if caps["fs"].(map[string]any)["writeTextFile"] != true {
 		t.Fatalf("explicit capabilities were overridden: %#v", caps)
+	}
+}
+
+func TestFilesystemModeDefaultsToFull(t *testing.T) {
+	if got := (Agent{ID: "x"}).FilesystemMode(); got != FilesystemFull {
+		t.Fatalf("FilesystemMode() = %q, want %q", got, FilesystemFull)
+	}
+}
+
+// TestUnknownFilesystemModeFailsClosed: a typo in the mode must not hand the
+// agent the filesystem. Configuration validation rejects the value first; this
+// is the second line of defence, and the one that holds for library use.
+func TestUnknownFilesystemModeFailsClosed(t *testing.T) {
+	if got := (Agent{ID: "x", Filesystem: "read-onyl"}).FilesystemMode(); got != FilesystemNone {
+		t.Fatalf("FilesystemMode() = %q, want %q", got, FilesystemNone)
 	}
 }
 

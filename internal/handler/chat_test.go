@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -30,13 +31,17 @@ func TestMain(m *testing.M) {
 // newTestServer starts the gateway in front of the fake agent.
 // testOptions describes how the fake agent is configured for one test server.
 type testOptions struct {
-	env      map[string]string
-	token    string
-	readOnly bool
-	mode     string
+	env map[string]string
+	// token is the bearer token the test server requires, empty for none.
+	token string
+	// filesystem is the agent's filesystem mode: full, readonly or none.
+	filesystem string
+	mode       string
 	// workspace, when set, is used instead of a fresh temporary directory, so a
 	// test can inspect what the agent did or did not write.
 	workspace string
+	// logger, when set, captures the server's diagnostics for assertion.
+	logger *slog.Logger
 }
 
 func newTestServer(t *testing.T, env map[string]string, token string) *httptest.Server {
@@ -48,11 +53,11 @@ func newTestServerWithOptions(t *testing.T, opts testOptions) *httptest.Server {
 	t.Helper()
 
 	registry := agent.NewRegistry(agent.Agent{
-		ID:       "fake",
-		Name:     "Fake",
-		Command:  os.Args[0],
-		ReadOnly: opts.readOnly,
-		Mode:     opts.mode,
+		ID:         "fake",
+		Name:       "Fake",
+		Command:    os.Args[0],
+		Filesystem: opts.filesystem,
+		Mode:       opts.mode,
 	})
 	merged := map[string]string{"ACP2API_FAKE_AGENT": "1"}
 	for k, v := range opts.env {
@@ -75,7 +80,7 @@ func newTestServerWithOptions(t *testing.T, opts testOptions) *httptest.Server {
 	}
 	t.Cleanup(func() { _ = manager.Close() })
 
-	srv := httptest.NewServer(handler.New(manager, handler.Options{Token: opts.token}).Handler())
+	srv := httptest.NewServer(handler.New(manager, handler.Options{Token: opts.token, Logger: opts.logger}).Handler())
 	t.Cleanup(srv.Close)
 	return srv
 }

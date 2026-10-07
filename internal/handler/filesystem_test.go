@@ -2,12 +2,14 @@ package handler_test
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/quonaro/acp2api/internal/agent"
 	"github.com/quonaro/acp2api/internal/openai"
 )
 
@@ -18,8 +20,8 @@ func TestReadOnlyAgentRefusesWrites(t *testing.T) {
 			"FAKE_AGENT_WRITE_PATH":    "should-not-exist.txt",
 			"FAKE_AGENT_WRITE_CONTENT": "written",
 		},
-		readOnly:  true,
-		workspace: workspace,
+		filesystem: agent.FilesystemReadOnly,
+		workspace:  workspace,
 	})
 
 	resp := post(t, srv, "", map[string]any{
@@ -42,7 +44,7 @@ func TestReadOnlyAgentRefusesWrites(t *testing.T) {
 }
 
 // TestWritableAgentStillWrites is the control: the refusal must be the
-// read-only setting, not something that broke writes generally.
+// filesystem mode, not something that broke writes generally.
 func TestWritableAgentStillWrites(t *testing.T) {
 	workspace := t.TempDir()
 	srv := newTestServerWithOptions(t, testOptions{
@@ -68,7 +70,7 @@ func TestWritableAgentStillWrites(t *testing.T) {
 }
 
 func TestReadOnlyAgentDoesNotAdvertiseWrite(t *testing.T) {
-	srv := newTestServerWithOptions(t, testOptions{readOnly: true})
+	srv := newTestServerWithOptions(t, testOptions{filesystem: agent.FilesystemReadOnly})
 
 	resp := post(t, srv, "", map[string]any{
 		"model":    "fake",
@@ -77,6 +79,59 @@ func TestReadOnlyAgentDoesNotAdvertiseWrite(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
+	}
+}
+
+// TestNoFilesystemAgentRefusesReadsAndWrites is the provider-style mode end to
+// end: the agent asks for both, and both are refused at the handler — the
+// capability is a contract, the refusal is the guarantee.
+func TestNoFilesystemAgentRefusesReadsAndWrites(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "secret.txt"), []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServerWithOptions(t, testOptions{
+		env: map[string]string{
+			"FAKE_AGENT_FS_REPORT":     "1",
+			"FAKE_AGENT_READ_PATH":     "secret.txt",
+			"FAKE_AGENT_WRITE_PATH":    "should-not-exist.txt",
+			"FAKE_AGENT_WRITE_CONTENT": "written",
+		},
+		filesystem: agent.FilesystemNone,
+		workspace:  workspace,
+	})
+
+	resp := post(t, srv, "", map[string]any{
+		"model":    "fake",
+		"messages": []map[string]string{{"role": "user", "content": "read and write"}},
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both calls are reported as refused, and the agent is told why: the client
+	// has no filesystem, rather than the call having failed for some other
+	// reason it might retry.
+	for _, want := range []string{"[read=", "[write="} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("the reply should report %s: %s", want, body)
+		}
+	}
+	if strings.Contains(string(body), "=ok]") {
+		t.Fatalf("no filesystem call should have succeeded: %s", body)
+	}
+	if !strings.Contains(string(body), "does not serve") {
+		t.Fatalf("the refusal should say the method is not served: %s", body)
+	}
+
+	if _, err := os.Stat(filepath.Join(workspace, "should-not-exist.txt")); err == nil {
+		t.Fatal("a no-filesystem agent wrote a file")
 	}
 }
 
