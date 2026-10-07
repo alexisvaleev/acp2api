@@ -150,7 +150,7 @@ func run() {
 		out:     bufio.NewWriter(os.Stdout),
 		pending: make(map[int64]chan message),
 	}
-	defer a.out.Flush()
+	defer func() { _ = a.out.Flush() }()
 
 	in := bufio.NewReaderSize(os.Stdin, 64*1024)
 	for {

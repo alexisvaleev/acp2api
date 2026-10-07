@@ -1,0 +1,39 @@
+# golangci-lint configuration (v2 schema).
+#
+# The `standard` set is errcheck, govet, ineffassign, staticcheck and unused.
+# The extra linters below catch defect classes this codebase actually has; each
+# one is here because it found something real, not to pad the list.
+#
+# `golangci-lint run` is what the pre-commit hook and CI execute, so the two
+# always agree.
+version: "2"
+
+linters:
+  default: standard
+  enable:
+  # fmt.Errorf("%w") misuse silently breaks errors.Is/As, and the gateway
+  # classifies ACP errors with errors.Is.
+  - errorlint
+  - misspell
+  # A returned nil error next to a non-nil value reads as success to the caller.
+  # The three deliberate exceptions carry a nolint with the reason.
+  - nilerr
+  - unconvert
+  - whitespace
+  settings:
+    errcheck:
+      exclude-functions:
+      # A deferred Close on a response body is the idiomatic test pattern: the
+      # error cannot be acted on, and every handler test closes through a helper
+      # so the call site is not even where the body is read.
+      - (io.Closer).Close
+
+# Nothing is hidden: the defaults would cap identical issues at three and stop
+# at fifty per linter, which quietly turns a gate into a sample.
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  enable:
+  - gofmt

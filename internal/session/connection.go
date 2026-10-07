@@ -152,7 +152,7 @@ func (m *Manager) startConnection(a agent.Agent, workspace string) (*connection,
 func (c *connection) authenticate(ctx context.Context, cl *acp.Client, a agent.Agent, initRaw json.RawMessage) error {
 	var init acp.InitializeResponse
 	if err := json.Unmarshal(initRaw, &init); err != nil || len(init.AuthMethods) == 0 {
-		return nil
+		return nil //nolint:nilerr // an unreadable result advertises no auth method
 	}
 
 	request := acp.AuthenticateRequest{MethodID: authMethodID(a, init)}

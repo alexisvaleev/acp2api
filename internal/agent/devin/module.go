@@ -63,7 +63,7 @@ func (m Module) Credential(source agent.Source) (string, error) {
 
 	raw, err := source.ReadFile(filepath.Join(dataDir, "devin", credentialsFile))
 	if err != nil {
-		return "", nil
+		return "", nil //nolint:nilerr // a missing credentials file is not an error
 	}
 	return parseCredentials(string(raw))[credentialsKey], nil
 }

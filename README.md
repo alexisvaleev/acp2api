@@ -62,20 +62,28 @@ Environment: `ACP2API_ADDR`, `ACP2API_TOKEN`, `ACP2API_WORKSPACE`,
 The gateway logs to stderr, one record per line:
 
 ```text
-INFO [session] | agent ready | agent=devin pid=91240 workspace=. images=true
+INFO  [session] | agent ready | agent=devin pid=91240 workspace=. images=true
+DEBU  [agent]   | credential resolved | agent=devin source=module
+INFO  [acp2api] | listening | addr=127.0.0.1:8720 agents=devin,opencode
 ```
 
 The subsystem — `acp2api`, `session`, `agent`, `acp`, `handler` — is shown in
 brackets, followed by the message and its `key=value` attributes. `--verbose` on
 `serve` adds debug records and colors the level name.
 
+Both the level and the module are rendered at a fixed width, so the message
+column does not move from line to line: `INFO`, `WARN`, `DEBU` and `ERRO` are
+four characters each (the last two truncated), and the bracketed subsystem is
+padded to nine. A longer subsystem — `tool_calling:*` is the one — overflows the
+column rather than stretching every other line.
+
 Tool calls are logged under their own subsystem, one line per call, split by
 where the tool lives:
 
 ```text
-DEBUG [tool_calling:external] | tool_call | tool_call_id=tc-1 name=mcp__github__create_issue title="Create issue" kind=other status=in_progress
-DEBUG [tool_calling:internal] | tool_call | tool_call_id=tc-2 name=exec title="Run the tests" kind=execute status=in_progress
-DEBUG [tool_calling:from rest] | tool_call | tool_call_id=call_get_weather_1 name=get_weather arguments={"city":"Paris"}
+DEBU [tool_calling:external] | tool_call | tool_call_id=tc-1 name=mcp__github__create_issue title="Create issue" kind=other status=in_progress
+DEBU [tool_calling:internal] | tool_call | tool_call_id=tc-2 name=exec title="Run the tests" kind=execute status=in_progress
+DEBU [tool_calling:from rest] | tool_call | tool_call_id=call_get_weather_1 name=get_weather arguments={"city":"Paris"}
 ```
 
 - `external` — an MCP server wired into the agent CLI itself. Recognised by the
@@ -577,6 +585,18 @@ failure.
 go build ./... && go vet ./... && go test ./... -race
 ```
 
+Those checks, plus `golangci-lint`, are wired into a git hook. Install it once
+per clone:
+
+```sh
+pre-commit install          # run the checks on every `git commit`
+pre-commit run --all-files  # run them over the whole tree
+```
+
+`.pre-commit-config.yaml` defines the hooks and `.golangci.yml` configures the
+linter. The hook and the CI job run the same commands, so a green hook means a
+green runner.
+
 Tests never touch a real agent: they run a scriptable fake ACP agent
 (`internal/fakeagent`) inside the test binary.
 
@@ -597,8 +617,8 @@ Windows (amd64 and arm64), writes `checksums.txt`, and publishes a GitHub
 Release with the binaries attached. The tag is compiled in, so `acp2api
 version` and the version the gateway reports to an agent match the release.
 
-`.github/workflows/ci.yml` runs `gofmt`, `go vet` and the race tests on every
-push to `main` and on every pull request.
+`.github/workflows/ci.yml` runs `gofmt`, `go vet`, `golangci-lint` and the race
+tests on every push to `main` and on every pull request.
 
 ## Prior art
 

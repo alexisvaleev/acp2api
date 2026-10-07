@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   test:
-    name: Format, vet and test
+    name: Format, vet, lint and test
     runs-on: ubuntu-latest
     steps:
     - name: Checkout
@@ -28,6 +28,13 @@ jobs:
 
     - name: Vet
       run: go vet ./...
+
+    # Pinned to the version the pre-commit hook runs locally, so a green hook
+    # cannot disagree with the runner.
+    - name: Lint
+      uses: golangci/golangci-lint-action@v9
+      with:
+        version: v2.14.0
 
     - name: Test
       run: go test ./... -race -count=1

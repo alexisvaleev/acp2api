@@ -92,11 +92,14 @@ Do not split just to hit a number. Group by cohesive responsibility.
 ## Verification before committing
 
 ```sh
-test -z "$(gofmt -l .)" && go vet ./... && go test ./... -race -count=1
+test -z "$(gofmt -l .)" && go vet ./... && golangci-lint run ./... && go test ./... -race -count=1
 ```
 
-`gofmt -l` must print nothing. `lota.yml` covers only `dev`, `build` and
-`push`.
+`gofmt -l` must print nothing and `golangci-lint` must report no issues.
+`.pre-commit-config.yaml` runs exactly these commands on `git commit` (`pre-commit
+install` once per clone), and `.golangci.yml` is the linter's configuration —
+loosening it is a change to the gate, so it moves with the code and the README.
+`lota.yml` covers only `dev`, `build` and `push`.
 
 ## Commits
 

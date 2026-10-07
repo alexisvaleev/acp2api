@@ -1,0 +1,60 @@
+# Git hooks via the pre-commit framework.
+#
+# Install once per clone:  pre-commit install
+# Run against every file:  pre-commit run --all-files
+#
+# The Go hooks are `language: system`, so they use the toolchain already on
+# PATH and honour `.golangci.yml` from the repository root. They mirror the CI
+# job in `.github/workflows/ci.yml`: the same gofmt, vet, lint and test run
+# locally as on the runner, so a green hook means a green CI.
+default_install_hook_types: [ pre-commit ]
+default_stages: [ pre-commit ]
+
+repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v6.0.0
+  hooks:
+  - id: trailing-whitespace
+  - id: end-of-file-fixer
+  - id: check-yaml
+  - id: check-merge-conflict
+  - id: check-added-large-files
+  # An agent API key in the tree is the one mistake worth failing a commit for.
+  - id: detect-private-key
+
+- repo: local
+  hooks:
+  # Rewrites the staged files and lets the hook fail, so the fix is staged with
+  # the change instead of a later commit.
+  - id: go-fmt
+    name: gofmt
+    entry: gofmt -l -w
+    language: system
+    types: [ go ]
+    require_serial: true
+
+  # `files` rather than `types` for the repo-wide hooks: a go.mod bump must be
+  # vetted and tested even though it stages no .go file.
+  - id: go-vet
+    name: go vet
+    entry: go vet ./...
+    language: system
+    files: \.(go|mod|sum)$
+    pass_filenames: false
+    require_serial: true
+
+  - id: golangci-lint
+    name: golangci-lint
+    entry: golangci-lint run ./...
+    language: system
+    files: \.(go|mod|sum)$
+    pass_filenames: false
+    require_serial: true
+
+  - id: go-test
+    name: go test -race
+    entry: go test ./... -race -count=1
+    language: system
+    files: \.(go|mod|sum)$
+    pass_filenames: false
+    require_serial: true

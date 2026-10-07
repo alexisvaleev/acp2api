@@ -92,7 +92,7 @@ func (a *agent) turn(msg message) {
 	a.result(msg.ID, map[string]any{"stopReason": stop})
 
 	if os.Getenv("FAKE_AGENT_EXIT_AFTER") == "1" {
-		a.out.Flush()
+		_ = a.out.Flush()
 		os.Exit(0)
 	}
 }
@@ -175,7 +175,7 @@ func (a *agent) turnPieces(prompt string) []string {
 	turn := a.turns
 	a.mu.Unlock()
 
-	if name := os.Getenv("FAKE_AGENT_ENVELOPE"); name != "" && !(turn > 1 && os.Getenv("FAKE_AGENT_ENVELOPE_ONCE") == "1") {
+	if name := os.Getenv("FAKE_AGENT_ENVELOPE"); name != "" && (turn <= 1 || os.Getenv("FAKE_AGENT_ENVELOPE_ONCE") != "1") {
 		envelope := fmt.Sprintf(
 			`{"tool_calls":[{"id":"call_1","type":"function","function":{"name":%q,"arguments":"{\"city\":\"Paris\"}"}}]}`,
 			name,

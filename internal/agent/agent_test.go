@@ -115,7 +115,7 @@ func TestFilesystemModeDefaultsToFull(t *testing.T) {
 // agent the filesystem. Configuration validation rejects the value first; this
 // is the second line of defence, and the one that holds for library use.
 func TestUnknownFilesystemModeFailsClosed(t *testing.T) {
-	if got := (Agent{ID: "x", Filesystem: "read-onyl"}).FilesystemMode(); got != FilesystemNone {
+	if got := (Agent{ID: "x", Filesystem: "read_only"}).FilesystemMode(); got != FilesystemNone {
 		t.Fatalf("FilesystemMode() = %q, want %q", got, FilesystemNone)
 	}
 }

@@ -4,12 +4,13 @@
 //	<LEVEL> [<module>] | <message> | key=value key=value
 //
 // where <module> is lifted from a "module" attribute and omitted when absent,
-// and the four-character level name is colored when debug is on.
+// and the level name is colored when debug is on. The level and the module are
+// rendered at a fixed width, so the message column does not move from line to
+// line and the log reads as a list rather than a ragged edge.
 package logger
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -20,6 +21,17 @@ import (
 // moduleKey is the attribute lifted out of a record and shown in brackets, so a
 // subsystem reads as "[session]" instead of prefixing every message with it.
 const moduleKey = "module"
+
+// levelWidth is the width of every level name, so the columns to its right line
+// up. It is the width of INFO, which forces ERROR and DEBUG to be truncated to
+// ERRO and DEBU.
+const levelWidth = 4
+
+// moduleField is the width of the "[module]" column. It fits every subsystem
+// the gateway logs under — [acp], [agent], [session], [acp2api], [handler] —
+// with the longest of them filling it exactly. A longer one, [tool_calling:*],
+// overflows the column instead of stretching every other line.
+const moduleField = 9
 
 type handler struct {
 	w      io.Writer
@@ -68,29 +80,37 @@ func (h *handler) Handle(_ context.Context, r slog.Record) error {
 		rest = append(rest, a)
 	}
 
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
+	// The line is assembled first and written once, so a failed write is
+	// reported instead of swallowed — a piecemeal handler cannot tell which of
+	// its writes failed and ends up discarding every error to keep the rest.
+	var b strings.Builder
 	if h.color {
-		fmt.Fprintf(h.w, "%s%s\033[0m", color, name)
+		b.WriteString(color)
+		b.WriteString(name)
+		b.WriteString("\033[0m")
 	} else {
-		fmt.Fprint(h.w, name)
+		b.WriteString(name)
 	}
-	if module != "" {
-		fmt.Fprintf(h.w, " [%s] | %s", module, r.Message)
-	} else {
-		fmt.Fprintf(h.w, " | %s", r.Message)
-	}
+	b.WriteString(" ")
+	b.WriteString(moduleColumn(module))
+	b.WriteString(" | ")
+	b.WriteString(r.Message)
 	for i, a := range rest {
 		if i == 0 {
-			fmt.Fprint(h.w, " | ")
+			b.WriteString(" | ")
 		} else {
-			fmt.Fprint(h.w, " ")
+			b.WriteString(" ")
 		}
-		fmt.Fprintf(h.w, "%s=%s", h.key(a.Key), a.Value.Resolve().String())
+		b.WriteString(h.key(a.Key))
+		b.WriteString("=")
+		b.WriteString(a.Value.Resolve().String())
 	}
-	fmt.Fprint(h.w, "\n")
-	return nil
+	b.WriteString("\n")
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	_, err := io.WriteString(h.w, b.String())
+	return err
 }
 
 func (h *handler) WithAttrs(attrs []slog.Attr) slog.Handler {
@@ -105,6 +125,21 @@ func (h *handler) WithGroup(name string) slog.Handler {
 	return h2
 }
 
+// moduleColumn renders the bracketed subsystem padded to moduleField. A record
+// without a module leaves the column blank, so its message still starts where
+// the messages of its neighbours do; a module wider than the column is printed
+// whole and overflows.
+func moduleColumn(module string) string {
+	if module == "" {
+		return strings.Repeat(" ", moduleField)
+	}
+	bracketed := "[" + module + "]"
+	if pad := moduleField - len(bracketed); pad > 0 {
+		return bracketed + strings.Repeat(" ", pad)
+	}
+	return bracketed
+}
+
 func (h *handler) formatLevel(l slog.Level) (string, string) {
 	switch {
 	case l >= slog.LevelError:
@@ -114,7 +149,7 @@ func (h *handler) formatLevel(l slog.Level) (string, string) {
 	case l >= slog.LevelInfo:
 		return "INFO", "\033[32m" // green
 	default:
-		return "DEBUG", "\033[36m" // cyan
+		return "DEBU", "\033[36m" // cyan
 	}
 }
 

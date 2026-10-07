@@ -256,7 +256,7 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, req op
 	limit, err := openai.NewTextLimit(req.Stop, req.MaxTokens)
 	if err != nil {
 		delta("", nil)
-		writeSSEDone(w)
+		_ = writeSSEDone(w)
 		flusher.Flush()
 		return
 	}
@@ -284,7 +284,7 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, req op
 		send(openai.ErrorResponse{Error: openai.ErrorBody{
 			Message: promptErr.Error(), Type: openai.ErrTypeServer, Code: "agent_error",
 		}})
-		writeSSEDone(w)
+		_ = writeSSEDone(w)
 		flusher.Flush()
 		return
 	}
@@ -298,7 +298,7 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, req op
 		finish = openai.FinishLength
 	}
 	delta("", &finish)
-	writeSSEDone(w)
+	_ = writeSSEDone(w)
 	flusher.Flush()
 }
 

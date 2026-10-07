@@ -111,7 +111,7 @@ func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, plan turnPla
 			Type:    openai.ErrTypeServer,
 			Code:    "agent_error",
 		}})
-		writeSSEDone(w)
+		_ = writeSSEDone(w)
 		flusher.Flush()
 		return
 	}
@@ -149,7 +149,7 @@ func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, plan turnPla
 				Code:    "invalid_response_format",
 				Param:   "response_format",
 			}})
-			writeSSEDone(w)
+			_ = writeSSEDone(w)
 			flusher.Flush()
 			return
 		}
@@ -184,7 +184,7 @@ func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, plan turnPla
 		})
 	}
 
-	writeSSEDone(w)
+	_ = writeSSEDone(w)
 	flusher.Flush()
 }
 

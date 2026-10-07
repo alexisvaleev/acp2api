@@ -48,10 +48,15 @@ OpenAI client ──HTTP/SSE──▶ gateway ──JSON-RPC over stdio──▶
   process instead of being silently ignored.
 - `internal/logger/` — the slog handler and console format for the process log:
   `LEVEL [module] | message | key=value`, module lifted from the `module`
-  attribute, level colored under `--verbose`. Tool calls are logged at debug
+  attribute, level colored under `--verbose`. Level and module are fixed-width
+  (`INFO`/`WARN`/`DEBU`/`ERRO`, bracketed module padded to nine) so the message
+  column holds down the page. Tool calls are logged at debug
   level as `tool_calling:<external|internal|from rest>`
   (`internal/handler/toollog.go`): an MCP server the agent CLI wired in, one of
   the agent's own tools, or a caller function relayed over REST.
+- `.pre-commit-config.yaml` — the git hook: gofmt, vet, golangci-lint and the
+  race tests, plus file hygiene. `.golangci.yml` is the linter's configuration
+  and the reason a run is green.
 - `.github/workflows/` — CI (`ci.yml`) and the tag-triggered release
   (`release.yml`).
 - Deployment is not containerised for the gateway: it runs on the host
@@ -83,6 +88,12 @@ go build ./... && go vet ./... && go test ./... -race
 # Run a single package's tests
 go test ./internal/openai/ -v
 ```
+
+`.pre-commit-config.yaml` wires the same checks, plus `golangci-lint`, into a
+git hook. Install it once per clone with `pre-commit install`; `pre-commit run
+--all-files` runs the whole set over the tree. The hook and the CI job execute
+identical commands, so a green hook means a green runner — and a change that
+loosens one belongs in the other.
 
 The gateway binary runs as `bin/acp2api serve`; its command line is the embedded
 Lota engine (`cmd/acp2api/cli.yml`), not the `flag` package.

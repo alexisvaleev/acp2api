@@ -77,7 +77,7 @@ func decodeContentParts(content json.RawMessage) ([]contentPart, error) {
 	var parts []contentPart
 	if err := json.Unmarshal(content, &parts); err != nil {
 		// A plain string is the common case and carries no images.
-		return nil, nil
+		return nil, nil //nolint:nilerr // a string content is not a parse failure
 	}
 	return parts, nil
 }
