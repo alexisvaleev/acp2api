@@ -208,6 +208,14 @@ func (c *connection) session(ctx context.Context, conversationID, model string) 
 		c.conversations[conversationID] = st
 	}
 	c.mu.Unlock()
+
+	// This is the line that ties the caller's conversation key to the agent's
+	// session id; every later session line keys off `session` alone.
+	attrs := []any{"agent", c.agent.ID, "session", st.id}
+	if conversationID != "" {
+		attrs = append(attrs, "conversation", conversationID)
+	}
+	slog.With("module", "session").Info("session opened", attrs...)
 	return st, true, nil
 }
 
@@ -300,7 +308,8 @@ func (c *connection) applyMode(ctx context.Context, session acp.NewSessionRespon
 		}); err != nil {
 			return fmt.Errorf("session: select mode %q on agent %q: %w", mode, c.agent.ID, err)
 		}
-		slog.With("module", "session").Info("mode selected", "agent", c.agent.ID, "mode", mode)
+		slog.With("module", "session").Info("mode selected",
+			"agent", c.agent.ID, "session", session.SessionID, "mode", mode)
 		return nil
 	}
 
@@ -308,16 +317,20 @@ func (c *connection) applyMode(ctx context.Context, session acp.NewSessionRespon
 		c.agent.ID, mode, strings.Join(available, ", "))
 }
 
-// drop removes a session from both indexes.
-func (c *connection) drop(st *state) {
+// drop removes a session from both indexes and reports the conversation key
+// it served, empty when the session was ephemeral.
+func (c *connection) drop(st *state) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.sessions, st.id)
-	for conv, s := range c.conversations {
+	var conv string
+	for key, s := range c.conversations {
 		if s == st {
-			delete(c.conversations, conv)
+			conv = key
+			delete(c.conversations, key)
 		}
 	}
+	return conv
 }
 
 // idleSessions returns the sessions idle beyond ttl that are not mid-turn.

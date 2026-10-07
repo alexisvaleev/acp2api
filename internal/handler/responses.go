@@ -148,7 +148,8 @@ func (s *Server) shouldStore(req openai.ResponsesRequest) bool {
 func (s *Server) blockingResponse(w http.ResponseWriter, r *http.Request, plan responsePlan) {
 	var text strings.Builder
 	var steps openai.StepLog
-	tools := newToolCallLog(s.log)
+	tools := newTurnLog(s.log, plan.conversationID)
+	plan.turn.OnSession = tools.bind
 
 	result, err := s.manager.Prompt(r.Context(), plan.turn, func(u acp.SessionUpdate) error {
 		piece, _, step := tools.update(u)
@@ -162,6 +163,7 @@ func (s *Server) blockingResponse(w http.ResponseWriter, r *http.Request, plan r
 	}
 
 	content := text.String()
+	tools.answered(content, result.StopReason)
 	var calls []openai.ToolCall
 	if plan.tools {
 		if parsed := openai.ParseToolCalls(content); len(parsed) > 0 {

@@ -70,7 +70,8 @@ func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, plan turnPla
 	var reasoning strings.Builder
 	var steps openai.StepLog
 	hold := openai.NewToolStream(plan.tools)
-	tools := newToolCallLog(s.log)
+	tools := newTurnLog(s.log, plan.turn.ConversationID)
+	plan.turn.OnSession = tools.bind
 
 	// A structured output has to be verified before it is delivered, so the
 	// answer is buffered rather than streamed. Streaming it and then reporting
@@ -135,6 +136,7 @@ func (s *Server) streamTurn(w http.ResponseWriter, r *http.Request, plan turnPla
 		}
 	}
 
+	tools.answered(text.String(), result.StopReason)
 	capped := limit.Capped()
 
 	// A structured answer is verified here, and retried once if it is wrong.

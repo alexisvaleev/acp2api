@@ -2,6 +2,7 @@ package handler_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"log/slog"
 	"strings"
 	"testing"
@@ -88,6 +89,90 @@ func TestLogsExternalMCPToolCallByTitleWhenNameIsAbsent(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "tool_calling:external") {
 		t.Fatalf("an MCP tool call with no name was not classified by its title:\n%s", out)
+	}
+}
+
+// TestToolCallLogNamesTheConversationAndSession: a tool-call record has to say
+// which chat it belongs to — the caller's conversation key, and the ACP
+// session id once the manager reports it — or interleaved sessions cannot be
+// told apart.
+func TestToolCallLogNamesTheConversationAndSession(t *testing.T) {
+	buf, log := logCapture()
+	srv := newTestServerWithOptions(t, testOptions{
+		logger: log,
+		env: map[string]string{
+			"FAKE_AGENT_TOOL_NAME":  "exec",
+			"FAKE_AGENT_TOOL_TITLE": "Run the tests",
+		},
+	})
+
+	resp := post(t, srv, "", map[string]any{
+		"model":           "fake",
+		"conversation_id": "chat-9",
+		"messages":        []map[string]string{{"role": "user", "content": "hi"}},
+	})
+	defer resp.Body.Close()
+
+	var body struct {
+		ACP struct {
+			SessionID string `json:"session_id"`
+		} `json:"acp"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "conversation=chat-9") {
+		t.Fatalf("the conversation key is missing from the tool-call log:\n%s", out)
+	}
+	if body.ACP.SessionID == "" {
+		t.Fatal("the response carries no acp.session_id to correlate against")
+	}
+	if !strings.Contains(out, "session="+body.ACP.SessionID) {
+		t.Fatalf("the session id %q is missing from the tool-call log:\n%s", body.ACP.SessionID, out)
+	}
+}
+
+// TestTurnReplyIsLogged: the agent's reply is logged on the turn it answered —
+// conversation key, session id and stop reason on the same record.
+func TestTurnReplyIsLogged(t *testing.T) {
+	buf, log := logCapture()
+	srv := newTestServerWithOptions(t, testOptions{
+		logger: log,
+		env:    map[string]string{"FAKE_AGENT_REPLY": "the answer is 42"},
+	})
+
+	resp := post(t, srv, "", map[string]any{
+		"model":           "fake",
+		"conversation_id": "chat-9",
+		"messages":        []map[string]string{{"role": "user", "content": "hi"}},
+	})
+	defer resp.Body.Close()
+
+	var body struct {
+		ACP struct {
+			SessionID string `json:"session_id"`
+		} `json:"acp"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	var line string
+	for _, candidate := range strings.Split(buf.String(), "\n") {
+		if strings.Contains(candidate, "msg=reply") {
+			line = candidate
+		}
+	}
+	if line == "" {
+		t.Fatalf("the agent's reply was not logged:\n%s", buf.String())
+	}
+	for _, want := range []string{"conversation=chat-9", "session=" + body.ACP.SessionID,
+		"stop=end_turn", "the answer is 42"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("the reply line is missing %q:\n%s", want, line)
+		}
 	}
 }
 

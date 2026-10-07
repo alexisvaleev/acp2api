@@ -95,14 +95,16 @@ func (s *Server) runPrompt(r *http.Request, req openai.CompletionRequest, prompt
 
 	var text strings.Builder
 	var steps openai.StepLog
+	tools := newTurnLog(s.log, conversationID)
 
 	result, err := s.manager.Prompt(r.Context(), session.Request{
 		Model:          req.Model,
 		ConversationID: conversationID,
 		Workspace:      req.Workspace,
 		Prompt:         prompt,
+		OnSession:      tools.bind,
 	}, func(u acp.SessionUpdate) error {
-		piece, _, step := openai.FromUpdate(u)
+		piece, _, step := tools.update(u)
 		steps.Add(step)
 		if piece == "" {
 			return nil
@@ -115,6 +117,7 @@ func (s *Server) runPrompt(r *http.Request, req openai.CompletionRequest, prompt
 		return completionRun{err: err}
 	}
 	text.WriteString(limit.Finish())
+	tools.answered(text.String(), result.StopReason)
 
 	return completionRun{
 		text:   text.String(),
@@ -261,20 +264,25 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, req op
 		return
 	}
 
+	conversationID := conversationIDFor(req.ConversationID, s.chatHeader(r), req.User)
+	tools := newTurnLog(s.log, conversationID)
+	var text strings.Builder
 	var steps openai.StepLog
 	result, promptErr := s.manager.Prompt(r.Context(), session.Request{
 		Model:          req.Model,
-		ConversationID: conversationIDFor(req.ConversationID, s.chatHeader(r), req.User),
+		ConversationID: conversationID,
 		Workspace:      req.Workspace,
 		Prompt:         prompt,
+		OnSession:      tools.bind,
 	}, func(u acp.SessionUpdate) error {
-		piece, _, step := openai.FromUpdate(u)
+		piece, _, step := tools.update(u)
 		steps.Add(step)
 		if piece == "" {
 			return nil
 		}
 		emit, _ := limit.Push(piece)
 		if emit != "" {
+			text.WriteString(emit)
 			delta(emit, nil)
 		}
 		return nil
@@ -290,8 +298,10 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, req op
 	}
 
 	if rest := limit.Finish(); rest != "" {
+		text.WriteString(rest)
 		delta(rest, nil)
 	}
+	tools.answered(text.String(), result.StopReason)
 
 	finish := openai.FinishReason(result.StopReason)
 	if limit.Capped() {

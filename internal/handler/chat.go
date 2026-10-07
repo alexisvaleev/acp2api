@@ -180,7 +180,8 @@ func (s *Server) runTurn(r *http.Request, plan turnPlan, prompt string, keepPart
 	var text strings.Builder
 	var reasoning strings.Builder
 	var steps openai.StepLog
-	tools := newToolCallLog(s.log)
+	tools := newTurnLog(s.log, turn.ConversationID)
+	turn.OnSession = tools.bind
 
 	result, err := s.manager.Prompt(r.Context(), turn, func(u acp.SessionUpdate) error {
 		piece, thought, step := tools.update(u)
@@ -213,6 +214,9 @@ func (s *Server) runTurn(r *http.Request, plan turnPlan, prompt string, keepPart
 			out.text = ""
 		}
 	}
+	// The reply is the raw text the agent produced — a tool-call envelope when
+	// it asked for a caller function, prose otherwise.
+	tools.answered(text.String(), result.StopReason)
 	tools.callerCalls(out.calls)
 	return out, nil
 }

@@ -46,7 +46,11 @@ OpenAI client ──HTTP/SSE──▶ gateway ──JSON-RPC over stdio──▶
 - `internal/agent/<name>/` — one module per agent that needs one; currently
   `devin`. The core never imports these.
 - `internal/client/` — client-side ACP handlers: fs, terminal, permission.
-- `internal/session/` — conversation ↔ ACP session, process lifecycle.
+- `internal/session/` — conversation ↔ ACP session, process lifecycle. Its log
+  lines name the ACP session (`session=`); `session opened` ties it to the
+  caller's conversation key, and per-turn handler records carry both
+  (`conversation=` and `session=`, bound via `Request.OnSession`). Turn traffic
+  — `prompt` sent and `reply` received — is logged under the `turn` module.
 - `internal/openai/` — OpenAI types, the parameter policy, the tool-call
   envelope contract, and the ACP→OpenAI mapping.
 - `internal/handler/` — thin HTTP handlers and middleware.

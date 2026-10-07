@@ -12,6 +12,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -75,6 +76,10 @@ type Request struct {
 	// ReplayParts, when set, replaces Parts alongside Replay. The two are always
 	// set together: they carry the same content blocks, with Replay's text.
 	ReplayParts []acp.ContentBlock
+	// OnSession, when set, is notified of the ACP session id as soon as it is
+	// known — before the turn's first update — so a caller can tag its own log
+	// lines with the session they belong to.
+	OnSession func(sessionID string)
 }
 
 // replayed swaps in the whole-transcript rendering, for a session that has just
@@ -201,11 +206,15 @@ func (m *Manager) Prompt(ctx context.Context, req Request, onUpdate func(acp.Ses
 	if err != nil {
 		return Result{}, err
 	}
+	if req.OnSession != nil {
+		req.OnSession(st.id)
+	}
 	if created {
 		// The agent holds no history of its own, so the transcript is the only
 		// history this turn will ever see.
 		req = req.replayed()
 	}
+	logTurnPrompt(a.ID, st.id, req, created)
 
 	stop, err := st.run(ctx, req, onUpdate)
 	if err != nil {
@@ -217,6 +226,22 @@ func (m *Manager) Prompt(ctx context.Context, req Request, onUpdate func(acp.Ses
 		SessionID:      st.id,
 		StopReason:     stop,
 	}, nil
+}
+
+// logTurnPrompt records what the turn sends to the agent, on the session it is
+// sent over. A replayed transcript is marked, or the line would read as an
+// ordinary single-turn prompt; the text is quoted so a multi-line prompt stays
+// one record.
+func logTurnPrompt(agentID, sessionID string, req Request, fresh bool) {
+	attrs := []any{"agent", agentID, "session", sessionID}
+	if req.ConversationID != "" {
+		attrs = append(attrs, "conversation", req.ConversationID)
+	}
+	if fresh && req.Replay != "" {
+		attrs = append(attrs, "replayed", true)
+	}
+	slog.With("module", "turn").Info("prompt",
+		append(attrs, "chars", len(req.Prompt), "text", strconv.Quote(req.Prompt))...)
 }
 
 // hasImages reports whether any part is an image block.
@@ -271,7 +296,11 @@ func (m *Manager) reapOnce() {
 			continue
 		}
 		for _, st := range c.idleSessions(ttl) {
-			c.drop(st)
+			attrs := []any{"agent", c.agent.ID, "session", st.id}
+			if conv := c.drop(st); conv != "" {
+				attrs = append(attrs, "conversation", conv)
+			}
+			slog.With("module", "session").Info("session expired", attrs...)
 		}
 
 		c.mu.Lock()

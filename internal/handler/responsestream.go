@@ -94,7 +94,8 @@ func (s *Server) streamResponse(w http.ResponseWriter, r *http.Request, plan res
 	hold := openai.NewToolStream(plan.tools)
 	var text strings.Builder
 	var steps openai.StepLog
-	tools := newToolCallLog(s.log)
+	tools := newTurnLog(s.log, plan.conversationID)
+	plan.turn.OnSession = tools.bind
 
 	result, err := s.manager.Prompt(r.Context(), plan.turn, func(u acp.SessionUpdate) error {
 		piece, _, step := tools.update(u)
@@ -144,6 +145,7 @@ func (s *Server) streamResponse(w http.ResponseWriter, r *http.Request, plan res
 			Delta:        rest,
 		})
 	}
+	tools.answered(text.String(), result.StopReason)
 
 	items := make([]openai.OutputItem, 0, len(calls)+1)
 	nextIndex := 0

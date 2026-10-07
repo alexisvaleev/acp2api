@@ -77,13 +77,35 @@ four characters each (the last two truncated), and the bracketed subsystem is
 padded to nine. A longer subsystem — `tool_calling:*` is the one — overflows the
 column rather than stretching every other line.
 
+Lines that belong to one conversation are tagged with it. `conversation=` is
+the caller's key (`conversation_id`, the conversation header, or `user`), and
+`session=` is the ACP session id — the same value a response carries in
+`acp.session_id`, so a log line correlates end to end. The line that ties the
+two together is `session opened`; the idle reaper reports `session expired`
+when it forgets one:
+
+```text
+INFO [session] | session opened  | agent=devin session=sess_… conversation=chat-42
+INFO [session] | session expired | agent=devin session=sess_… conversation=chat-42
+```
+
+Every turn logs what crossed the wire under the `turn` module: `prompt` is the
+text handed to the agent (`replayed=true` when a fresh session received the
+whole transcript instead of the newest turn), `reply` is what it answered.
+Text is quoted, so a record always stays one line:
+
+```text
+INFO [turn]    | prompt | agent=devin session=sess_… conversation=chat-42 chars=128 text="…"
+INFO [turn]    | reply  | conversation=chat-42 session=sess_… stop=end_turn chars=512 text="…"
+```
+
 Tool calls are logged under their own subsystem, one line per call, split by
 where the tool lives:
 
 ```text
-DEBU [tool_calling:external] | tool_call | tool_call_id=tc-1 name=mcp__github__create_issue title="Create issue" kind=other status=in_progress
-DEBU [tool_calling:internal] | tool_call | tool_call_id=tc-2 name=exec title="Run the tests" kind=execute status=in_progress
-DEBU [tool_calling:from rest] | tool_call | tool_call_id=call_get_weather_1 name=get_weather arguments={"city":"Paris"}
+DEBU [tool_calling:external] | tool_call | conversation=chat-42 session=sess_… tool_call_id=tc-1 name=mcp__github__create_issue title="Create issue" kind=other status=in_progress
+DEBU [tool_calling:internal] | tool_call | conversation=chat-42 session=sess_… tool_call_id=tc-2 name=exec title="Run the tests" kind=execute status=in_progress
+DEBU [tool_calling:from rest] | tool_call | conversation=chat-42 session=sess_… tool_call_id=call_get_weather_1 name=get_weather arguments={"city":"Paris"}
 ```
 
 - `external` — an MCP server wired into the agent CLI itself. Recognised by the

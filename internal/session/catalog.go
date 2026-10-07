@@ -37,11 +37,17 @@ func (c *connection) captureCatalog(session acp.NewSessionResponse) {
 			continue
 		}
 		c.mu.Lock()
+		first := c.modelOption == nil
 		c.modelOption = &option
 		c.mu.Unlock()
-		slog.With("module", "session").Debug("model catalog captured",
-			"agent", c.agent.ID, "option", option.ID, "models", len(option.Options),
-			"current", option.CurrentValue, "sample", sampleValues(option.Options))
+		// The catalog is a property of the connection, not the session, so only
+		// the first capture is worth a line — the rest would repeat it verbatim.
+		if first {
+			slog.With("module", "session").Debug("model catalog captured",
+				"agent", c.agent.ID, "session", session.SessionID, "option", option.ID,
+				"models", len(option.Options), "current", option.CurrentValue,
+				"sample", sampleValues(option.Options))
+		}
 		return
 	}
 }
@@ -124,7 +130,8 @@ func (c *connection) selectModel(ctx context.Context, sessionID, model string) e
 		}); err != nil {
 			return fmt.Errorf("session: select model %q on agent %q: %w", model, c.agent.ID, err)
 		}
-		slog.With("module", "session").Debug("model selected", "agent", c.agent.ID, "model", model)
+		slog.With("module", "session").Debug("model selected",
+			"agent", c.agent.ID, "session", sessionID, "model", model)
 		return nil
 	}
 
