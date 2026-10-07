@@ -51,12 +51,10 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// A conversation id makes the session persistent, so the agent keeps the
-	// history and only the newest turn is sent. Without one the agent starts
-	// from nothing, so the whole transcript must be flattened into the prompt.
-	conversationID := req.ConversationID
-	if conversationID == "" {
-		conversationID = req.User
-	}
+	// history and only the newest turn is sent to it. Without one the agent
+	// starts from nothing, so the whole transcript must be flattened into the
+	// prompt.
+	conversationID := conversationIDFor(req.ConversationID, s.chatHeader(r), req.User)
 
 	choice, err := openai.ParseToolChoice(req.ToolChoice)
 	if err != nil {
@@ -78,10 +76,21 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prompt, err := openai.BuildTurn(req.Messages, conversationID != "", req.Tools, choice)
+	// The whole transcript, which is what an ephemeral session needs and what a
+	// session created for this request needs: the agent then holds no history.
+	replay, err := openai.BuildTurn(req.Messages, false, req.Tools, choice)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest, "invalid_messages", err.Error(), "messages")
 		return
+	}
+	// A session that already exists holds the history itself, so replaying the
+	// transcript into it would duplicate what it can already see.
+	prompt := replay
+	if conversationID != "" {
+		if prompt, err = openai.BuildTurn(req.Messages, true, req.Tools, choice); err != nil {
+			writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest, "invalid_messages", err.Error(), "messages")
+			return
+		}
 	}
 
 	images, err := openai.ImageParts(req.Messages)
@@ -94,7 +103,9 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// The output format is prompt engineering, like the tool contract: ACP has
 	// no schema negotiation, so the shape is requested and then verified.
 	if instruction := format.Instruction(); instruction != "" {
-		prompt = instruction + "\n" + prompt
+		prefix := instruction + "\n"
+		prompt = prefix + prompt
+		replay = prefix + replay
 	}
 
 	plan := turnPlan{
@@ -111,6 +122,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			Workspace:      req.Workspace,
 			Prompt:         prompt,
 			Parts:          contentParts(prompt, images),
+			Replay:         replay,
+			ReplayParts:    contentParts(replay, images),
 		},
 	}
 

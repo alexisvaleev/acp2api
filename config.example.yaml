@@ -43,6 +43,15 @@ session_ttl_seconds: 1800
 #             no filesystem, so it answers instead of exploring.
 filesystem: full
 
+# The request header that keys a session, for clients that cannot put an
+# extension field in the body. It is read only when the body names no
+# conversation, so conversation_id still wins, and `user` is the fallback.
+#
+#   X-Chat-Id              your own client, sending a per-chat id
+#   X-OpenWebUI-Chat-Id    Open WebUI, with ENABLE_FORWARD_USER_INFO_HEADERS
+#   ""                     read no header at all
+conversation_header: X-Chat-Id
+
 # The session mode selected after opening a session. "plan" and "ask" are
 # read-only on most agents. The value is checked against what each agent
 # advertises — an agent that does not offer it fails with the list of ones it

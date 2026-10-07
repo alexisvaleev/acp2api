@@ -59,6 +59,33 @@ type Request struct {
 	// Parts, when non-empty, replaces Prompt with structured content blocks.
 	// That is how image prompts reach the agent.
 	Parts []acp.ContentBlock
+	// Replay is the same turn with the whole conversation flattened in front of
+	// it, and is used only when the session had to be created for this request.
+	//
+	// A session the gateway already holds holds the history itself, so replaying
+	// would duplicate it. A session created now holds nothing, so sending only
+	// the newest turn leaves the agent answering with no context at all — a
+	// confident answer to a question nobody asked, with nothing to show that
+	// anything went wrong. It is the client that remembers a conversation key
+	// across a gateway restart; the gateway does not.
+	//
+	// Empty means Prompt is already the whole text, which is the case for an
+	// ephemeral request and for the legacy completions endpoint.
+	Replay string
+	// ReplayParts, when set, replaces Parts alongside Replay. The two are always
+	// set together: they carry the same content blocks, with Replay's text.
+	ReplayParts []acp.ContentBlock
+}
+
+// replayed swaps in the whole-transcript rendering, for a session that has just
+// been created.
+func (r Request) replayed() Request {
+	if r.Replay == "" {
+		return r
+	}
+	r.Prompt = r.Replay
+	r.Parts = r.ReplayParts
+	return r
 }
 
 // Result describes a completed turn.
@@ -170,9 +197,14 @@ func (m *Manager) Prompt(ctx context.Context, req Request, onUpdate func(acp.Ses
 	if hasImages(req.Parts) && !conn.capabilities.Images {
 		return Result{}, ErrImagesUnsupported
 	}
-	st, err := conn.session(ctx, req.ConversationID, model)
+	st, created, err := conn.session(ctx, req.ConversationID, model)
 	if err != nil {
 		return Result{}, err
+	}
+	if created {
+		// The agent holds no history of its own, so the transcript is the only
+		// history this turn will ever see.
+		req = req.replayed()
 	}
 
 	stop, err := st.run(ctx, req, onUpdate)

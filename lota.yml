@@ -8,15 +8,7 @@ vars:
 dev:
   desc: Run the gateway in development mode
   color: green
-  args:
-  - addr:str=127.0.0.1:8720
-  - workspace|w:str=.
-  - permission|p:str=allow
-  script: |
-    air -c .air.toml -- \
-      --addr $addr \
-      --workspace $workspace \
-      --permission $permission
+  script: air
 
 build:
   desc: Build the gateway binary

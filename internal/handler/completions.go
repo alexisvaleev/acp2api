@@ -151,7 +151,7 @@ func (s *Server) blockingCompletion(w http.ResponseWriter, r *http.Request, req 
 			// independent choices need independent sessions.
 			conversationID := ""
 			if len(prompts) == 1 && repeats == 1 {
-				conversationID = conversationIDFor(req.ConversationID, req.User)
+				conversationID = conversationIDFor(req.ConversationID, s.chatHeader(r), req.User)
 			}
 			jobs = append(jobs, job{prompt: prompt, conversationID: conversationID})
 		}
@@ -264,7 +264,7 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, req op
 	var steps openai.StepLog
 	result, promptErr := s.manager.Prompt(r.Context(), session.Request{
 		Model:          req.Model,
-		ConversationID: conversationIDFor(req.ConversationID, req.User),
+		ConversationID: conversationIDFor(req.ConversationID, s.chatHeader(r), req.User),
 		Workspace:      req.Workspace,
 		Prompt:         prompt,
 	}, func(u acp.SessionUpdate) error {
@@ -303,9 +303,15 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, req op
 }
 
 // conversationIDFor resolves a conversation id from either extension field.
-func conversationIDFor(conversationID, user string) string {
+// conversationIDFor resolves the key that makes a session persistent, in the
+// order of how explicit the caller was: the body's own field, then the per-chat
+// header, then `user`, which exists for clients that cannot set a custom field.
+func conversationIDFor(conversationID, header, user string) string {
 	if conversationID != "" {
 		return conversationID
+	}
+	if header != "" {
+		return header
 	}
 	return user
 }

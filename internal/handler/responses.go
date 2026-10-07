@@ -48,7 +48,7 @@ func (s *Server) handleCreateResponse(w http.ResponseWriter, r *http.Request) {
 	}
 
 	responseID := openai.NewID("resp")
-	conversationID, ok := s.resumeConversation(w, req)
+	conversationID, ok := s.resumeConversation(w, r, req)
 	if !ok {
 		return
 	}
@@ -58,14 +58,27 @@ func (s *Server) handleCreateResponse(w http.ResponseWriter, r *http.Request) {
 		conversationID = "resp:" + responseID
 	}
 
-	prompt, err := openai.BuildTurn(messages, conversationID != "", req.Tools, choice)
+	// The whole transcript, which is what an ephemeral session needs and what a
+	// session created for this request needs: the agent then holds no history.
+	replay, err := openai.BuildTurn(messages, false, req.Tools, choice)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest, "invalid_input", err.Error(), "input")
 		return
 	}
+	// A session that already exists holds the history itself, so replaying the
+	// transcript into it would duplicate what it can already see.
+	prompt := replay
+	if conversationID != "" {
+		if prompt, err = openai.BuildTurn(messages, true, req.Tools, choice); err != nil {
+			writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest, "invalid_input", err.Error(), "input")
+			return
+		}
+	}
 	// ACP sessions have no system prompt, so instructions ride on every turn.
 	if instructions := strings.TrimSpace(req.Instructions); instructions != "" {
-		prompt = "## instructions\n" + instructions + "\n\n" + prompt
+		prefix := "## instructions\n" + instructions + "\n\n"
+		prompt = prefix + prompt
+		replay = prefix + replay
 	}
 
 	images, err := openai.ImageParts(messages)
@@ -87,6 +100,8 @@ func (s *Server) handleCreateResponse(w http.ResponseWriter, r *http.Request) {
 			Workspace:      req.Workspace,
 			Prompt:         prompt,
 			Parts:          contentParts(prompt, images),
+			Replay:         replay,
+			ReplayParts:    contentParts(replay, images),
 		},
 	}
 
@@ -108,12 +123,9 @@ type responsePlan struct {
 }
 
 // resumeConversation resolves the ACP conversation for the request.
-func (s *Server) resumeConversation(w http.ResponseWriter, req openai.ResponsesRequest) (string, bool) {
+func (s *Server) resumeConversation(w http.ResponseWriter, r *http.Request, req openai.ResponsesRequest) (string, bool) {
 	if req.PreviousResponseID == "" {
-		if req.ConversationID != "" {
-			return req.ConversationID, true
-		}
-		return req.User, true
+		return conversationIDFor(req.ConversationID, s.chatHeader(r), req.User), true
 	}
 
 	entry, found := s.responses.get(req.PreviousResponseID)

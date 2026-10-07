@@ -84,7 +84,11 @@ func runServer(ctx context.Context, nctx engine.NativeContext) error {
 	}
 	defer func() { _ = manager.Close() }()
 
-	server := handler.New(manager, handler.Options{Token: cfg.Token, Logger: log})
+	server := handler.New(manager, handler.Options{
+		Token:              cfg.Token,
+		Logger:             log,
+		ConversationHeader: cfg.ConversationHeader,
+	})
 
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,

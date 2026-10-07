@@ -19,11 +19,26 @@ import (
 
 // Server is the HTTP surface.
 type Server struct {
-	manager   *session.Manager
-	token     string
-	log       *slog.Logger
-	started   time.Time
-	responses *responseStore
+	manager            *session.Manager
+	token              string
+	log                *slog.Logger
+	started            time.Time
+	conversationHeader string
+	responses          *responseStore
+}
+
+// chatHeader returns the per-chat identifier the client sent, if the deployment
+// named a header and the client used it.
+//
+// It exists for clients that cannot put an extension field in the request body
+// but can send a header per chat. Open WebUI is the motivating one: with
+// ENABLE_FORWARD_USER_INFO_HEADERS it sends X-OpenWebUI-Chat-Id, which is the
+// only per-chat identifier it exposes.
+func (s *Server) chatHeader(r *http.Request) string {
+	if s.conversationHeader == "" {
+		return ""
+	}
+	return strings.TrimSpace(r.Header.Get(s.conversationHeader))
 }
 
 // Options configures a Server.
@@ -33,6 +48,10 @@ type Options struct {
 	Token string
 	// Logger receives request and agent diagnostics.
 	Logger *slog.Logger
+	// ConversationHeader names the header a client may send to key a session,
+	// for clients that cannot put an extension field in the body. Empty disables
+	// the mechanism.
+	ConversationHeader string
 }
 
 // New creates a server over the given session manager.
@@ -42,11 +61,12 @@ func New(manager *session.Manager, opts Options) *Server {
 		log = slog.Default()
 	}
 	return &Server{
-		manager:   manager,
-		token:     opts.Token,
-		log:       log,
-		started:   time.Now(),
-		responses: newResponseStore(defaultResponseLimit),
+		manager:            manager,
+		token:              opts.Token,
+		log:                log,
+		started:            time.Now(),
+		conversationHeader: opts.ConversationHeader,
+		responses:          newResponseStore(defaultResponseLimit),
 	}
 }
 

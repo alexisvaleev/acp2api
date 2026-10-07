@@ -79,6 +79,10 @@ func applyEnv(cfg *Config) {
 }
 
 // normalise fills in defaults and cleans paths.
+//
+// ConversationHeader is deliberately not filled in: an empty value is how a
+// deployment disables the mechanism, so refilling it would take away the off
+// switch. The default lives in Default(), which a file overlays.
 func (c *Config) normalise() {
 	if c.Addr == "" {
 		c.Addr = DefaultAddr

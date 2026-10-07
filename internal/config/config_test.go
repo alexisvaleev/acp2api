@@ -27,6 +27,12 @@ func TestDefaultFilesystemIsFull(t *testing.T) {
 	}
 }
 
+func TestDefaultConversationHeader(t *testing.T) {
+	if got := config.Default().ConversationHeader; got != config.DefaultConversationHeader {
+		t.Fatalf("conversation_header = %q, want %q", got, config.DefaultConversationHeader)
+	}
+}
+
 func TestValidateRejectsUnknownFilesystem(t *testing.T) {
 	cfg := config.Default()
 	cfg.Filesystem = "read-only"

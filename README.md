@@ -246,13 +246,44 @@ advertises would mean guessing which of its ids are real.
 
 An ACP session is stateful, which the OpenAI request shape does not express.
 
-- **With `conversation_id`** the turn runs on a persistent session: the agent
-  keeps the history, and only the newest user message is sent.
+- **With a conversation key** the turn runs on a persistent session: the agent
+  keeps the history, and only the newest user message is sent to it.
 - **Without one** the session is ephemeral and the whole `messages` transcript
   is flattened into the prompt, because the agent starts from nothing.
 
-`user` is accepted as a fallback conversation key for clients that cannot set a
-custom field.
+The key is resolved from the most explicit source available:
+
+1. `conversation_id` in the body — this gateway's own extension.
+2. the header named by `conversation_header` (default `X-Chat-Id`).
+3. `user` in the body, for clients that cannot set a custom field at all.
+
+The header exists for clients that can send a header per chat but cannot add a
+field to the body. **Open WebUI** is the motivating one: set
+`ENABLE_FORWARD_USER_INFO_HEADERS=true` on the container and it sends
+`X-OpenWebUI-Chat-Id`, so point the setting at that name:
+
+```yaml
+conversation_header: X-OpenWebUI-Chat-Id
+```
+
+Set `conversation_header: ""` to read no header at all.
+
+The key is trusted input from an authenticated caller, and it *is* the session:
+anyone holding the token can join a chat by naming its key. Locally that is the
+point; it is not an isolation boundary.
+
+### A key is a promise the gateway cannot always keep
+
+The client remembers a conversation key; the gateway does not. A restart, or the
+idle reaper, can leave the gateway with no session for a key the client is still
+sending. When that happens the session is created fresh and **the whole
+transcript is replayed into it** — a session that has just been created holds no
+history, so sending only the newest turn would leave the agent answering with no
+context at all, which reads as a confident answer to a question nobody asked.
+
+The reverse holds too: a session the gateway already had holds the history
+itself, so replaying the transcript into it would duplicate what the agent can
+already see. Both cases are covered by tests.
 
 ### Concurrency
 
@@ -429,6 +460,7 @@ expanded.
 | `disable_builtins` | `false` | `true` serves only the agents listed above, so `/v1/models` matches what the host can run. |
 | `filesystem` | `full` | `full`, `readonly` or `none`. Decides what `fs/*` callbacks are served, and which capabilities are advertised at `initialize`. |
 | `mode` | agent default | Session mode selected after opening a session, e.g. `plan` or `ask`. Checked against what the agent advertises. |
+| `conversation_header` | `X-Chat-Id` | Request header that keys a session, for clients that cannot set a body field. Empty disables it. |
 | `proxy` | none | Routes the agents' outbound traffic; `url`, optional `http`/`https`/`no_proxy`. |
 | `discover_models` | `false` | Read each agent's model catalog in the background at startup, so `/v1/models` lists models as well as agents. |
 

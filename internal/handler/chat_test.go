@@ -37,6 +37,9 @@ type testOptions struct {
 	// filesystem is the agent's filesystem mode: full, readonly or none.
 	filesystem string
 	mode       string
+	// conversationHeader names the header that keys a session. Empty disables
+	// it, which is what a deployment that names no header means.
+	conversationHeader string
 	// workspace, when set, is used instead of a fresh temporary directory, so a
 	// test can inspect what the agent did or did not write.
 	workspace string
@@ -80,13 +83,23 @@ func newTestServerWithOptions(t *testing.T, opts testOptions) *httptest.Server {
 	}
 	t.Cleanup(func() { _ = manager.Close() })
 
-	srv := httptest.NewServer(handler.New(manager, handler.Options{Token: opts.token, Logger: opts.logger}).Handler())
+	srv := httptest.NewServer(handler.New(manager, handler.Options{
+		Token:              opts.token,
+		Logger:             opts.logger,
+		ConversationHeader: opts.conversationHeader,
+	}).Handler())
 	t.Cleanup(srv.Close)
 	return srv
 }
 
 // post sends a chat completion request and returns the response.
 func post(t *testing.T, srv *httptest.Server, token string, body any) *http.Response {
+	t.Helper()
+	return postWith(t, srv, token, nil, body)
+}
+
+// postWith sends a chat completion request with extra headers.
+func postWith(t *testing.T, srv *httptest.Server, token string, headers map[string]string, body any) *http.Response {
 	t.Helper()
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -99,6 +112,9 @@ func post(t *testing.T, srv *httptest.Server, token string, body any) *http.Resp
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	for name, value := range headers {
+		req.Header.Set(name, value)
 	}
 	resp, err := srv.Client().Do(req)
 	if err != nil {

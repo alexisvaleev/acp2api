@@ -25,6 +25,12 @@ OpenAI client ──HTTP/SSE──▶ gateway ──JSON-RPC over stdio──▶
   session has a single update stream, so a second turn on the same conversation
   queues behind the first instead of taking its stream. ACP v1 cannot delete a
   session, so the process, not the session, is what the manager reclaims.
+- **A session that has just been created gets the whole transcript.** The client
+  remembers the conversation key; the gateway does not, so a restart or the idle
+  reaper can leave it with no session for a key the client is still sending.
+  Sending only the newest turn then makes the agent answer with no context,
+  which looks like a normal answer. The reverse is equally a bug: replaying into
+  a session that already holds the history duplicates it.
 - The agent calls *back* into the gateway to read/write files, run commands, and
   ask permission. Those callbacks are the whole point; refusing them cripples
   the agent. See `internal/client/`.

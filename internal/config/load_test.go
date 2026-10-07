@@ -334,3 +334,36 @@ func TestLoadKeepsEnvironmentFilesystemOverride(t *testing.T) {
 		t.Fatalf("filesystem = %q, the environment should win", cfg.Filesystem)
 	}
 }
+
+func TestLoadReadsConversationHeader(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("conversation_header: X-OpenWebUI-Chat-Id\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ConversationHeader != "X-OpenWebUI-Chat-Id" {
+		t.Fatalf("conversation_header = %q", cfg.ConversationHeader)
+	}
+}
+
+// TestEmptyConversationHeaderDisablesIt: naming no header is how a deployment
+// turns the mechanism off, so the default must not be filled back in — that
+// would take away the off switch while looking like a harmless tidy-up.
+func TestEmptyConversationHeaderDisablesIt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("conversation_header: \"\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ConversationHeader != "" {
+		t.Fatalf("conversation_header = %q, want it to stay empty", cfg.ConversationHeader)
+	}
+}

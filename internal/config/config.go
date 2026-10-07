@@ -19,6 +19,10 @@ const (
 	DefaultAddr           = "127.0.0.1:8720"
 	DefaultRequestTimeout = 120 * time.Second
 	DefaultSessionTTL     = 30 * time.Minute
+	// DefaultConversationHeader is the header a client may send to key a
+	// session. It is a name, not a capability, so it can be anything the
+	// deployment agrees on.
+	DefaultConversationHeader = "X-Chat-Id"
 )
 
 // Config is the gateway's runtime configuration.
@@ -64,6 +68,13 @@ type Config struct {
 	// agent. "plan" and "ask" are read-only on most agents. The value is
 	// checked against what each agent advertises.
 	Mode string `json:"mode" yaml:"mode"`
+	// ConversationHeader names the request header that keys a session, for
+	// clients that cannot put an extension field in the body.
+	//
+	// It is read only when the body names no conversation, so the most explicit
+	// key still wins. An empty value disables the mechanism, which is why it is
+	// not refilled when a file sets it to nothing.
+	ConversationHeader string `json:"conversation_header" yaml:"conversation_header"`
 	// DiscoverModels reads each agent's model catalog in the background at
 	// startup, so /v1/models lists the models and not only the agents.
 	//
@@ -106,6 +117,7 @@ func Default() Config {
 		Addr:                  DefaultAddr,
 		Permission:            "allow",
 		Filesystem:            agent.FilesystemFull,
+		ConversationHeader:    DefaultConversationHeader,
 		RequestTimeoutSeconds: int(DefaultRequestTimeout / time.Second),
 		SessionTTLSeconds:     int(DefaultSessionTTL / time.Second),
 	}
