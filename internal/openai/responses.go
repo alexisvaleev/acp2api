@@ -49,6 +49,13 @@ type ResponsesRequest struct {
 	Metadata        json.RawMessage `json:"metadata,omitempty"`
 	User            string          `json:"user,omitempty"`
 
+	// Reasoning carries the Responses effort selector; its effort level maps
+	// onto the agent's model-variant catalog the way chat's reasoning_effort
+	// does.
+	Reasoning *struct {
+		Effort string `json:"effort,omitempty"`
+	} `json:"reasoning,omitempty"`
+
 	// ConversationID and Workspace are this gateway's extensions, mirroring the
 	// chat surface.
 	ConversationID string `json:"conversation_id,omitempty"`

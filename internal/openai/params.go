@@ -104,14 +104,19 @@ var paramPolicy = map[string]ParamRule{
 	"frequency_penalty": {Name: "frequency_penalty", Disposition: Ignored, Reason: reasonSampling},
 	"logit_bias":        {Name: "logit_bias", Disposition: Ignored, Reason: reasonSampling},
 
+	/* Honoured: the effort level selects the agent's model variant —
+	   "devin/swe-2" + effort "max" resolves to "swe-2-max" in the agent's
+	   advertised catalog. */
+	"reasoning_effort": {Name: "reasoning_effort", Disposition: Supported},
+	"reasoning":        {Name: "reasoning", Disposition: Supported},
+
 	/* Accepted and reported: they steer the agent but cannot change the shape
 	   of the response, so a caller cannot detect that they were dropped. */
-	"reasoning_effort": {Name: "reasoning_effort", Disposition: Ignored, Reason: reasonSteering},
-	"verbosity":        {Name: "verbosity", Disposition: Ignored, Reason: reasonSteering},
-	"service_tier":     {Name: "service_tier", Disposition: Ignored, Reason: reasonSteering},
-	"prediction":       {Name: "prediction", Disposition: Ignored, Reason: reasonSteering},
-	"store":            {Name: "store", Disposition: Ignored, Reason: reasonSteering},
-	"metadata":         {Name: "metadata", Disposition: Ignored, Reason: reasonSteering},
+	"verbosity":    {Name: "verbosity", Disposition: Ignored, Reason: reasonSteering},
+	"service_tier": {Name: "service_tier", Disposition: Ignored, Reason: reasonSteering},
+	"prediction":   {Name: "prediction", Disposition: Ignored, Reason: reasonSteering},
+	"store":        {Name: "store", Disposition: Ignored, Reason: reasonSteering},
+	"metadata":     {Name: "metadata", Disposition: Ignored, Reason: reasonSteering},
 
 	/* Unsupported: ignoring these would make the response violate the request. */
 	"functions":          {Name: "functions", Disposition: Unsupported, Reason: reasonLegacyFns},

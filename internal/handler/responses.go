@@ -96,6 +96,7 @@ func (s *Server) handleCreateResponse(w http.ResponseWriter, r *http.Request) {
 		conversationID: conversationID,
 		turn: session.Request{
 			Model:          req.Model,
+			Effort:         responsesEffort(req),
 			ConversationID: conversationID,
 			Workspace:      req.Workspace,
 			Prompt:         prompt,
@@ -110,6 +111,15 @@ func (s *Server) handleCreateResponse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.blockingResponse(w, r, plan)
+}
+
+// responsesEffort reads the Responses reasoning object: its effort picks the
+// catalog variant the same way chat's reasoning_effort does.
+func responsesEffort(req openai.ResponsesRequest) string {
+	if req.Reasoning == nil {
+		return ""
+	}
+	return req.Reasoning.Effort
 }
 
 // responsePlan is everything both renderers need for one response.

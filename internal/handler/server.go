@@ -206,6 +206,15 @@ func (s *Server) authorised(r *http.Request) bool {
 }
 
 // writeJSON renders a JSON response.
+// effortOf reads an optional effort pointer; the chat surface carries it as
+// "reasoning_effort" and the Responses surface as "reasoning.effort".
+func effortOf(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

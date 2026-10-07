@@ -334,3 +334,100 @@ func TestInteractiveAuthIsOptIn(t *testing.T) {
 		t.Fatalf("interactive auth was allowed, so the session should open: %v", err)
 	}
 }
+
+func replyText(t *testing.T, m *session.Manager, req session.Request) (string, error) {
+	t.Helper()
+	var reply strings.Builder
+	_, err := m.Prompt(context.Background(), req, func(u acp.SessionUpdate) error {
+		if u.SessionUpdate == "agent_message_chunk" && u.Content != nil {
+			reply.WriteString(u.Content.Text)
+		}
+		return nil
+	})
+	return reply.String(), err
+}
+
+// TestEffortSelectsFamilyVariant pins the family form: "fake/base" plus
+// effort "high" selects the catalog entry "base-high", not the default.
+func TestEffortSelectsFamilyVariant(t *testing.T) {
+	m, _ := newManager(t, fakeRegistry(), map[string]string{
+		"FAKE_AGENT_MODELS":     "base-low,base-high,base-high-fast",
+		"FAKE_AGENT_ECHO_STATE": "1",
+	})
+	reply, err := replyText(t, m, session.Request{Model: "fake/base", Effort: "high", Prompt: "hi"})
+	if err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	if !strings.Contains(reply, "model=base-high") {
+		t.Fatalf("reply = %q, want the base-high variant selected", reply)
+	}
+}
+
+// TestEffortRewritesLevelKeepingModifier covers a suffixed id: the level word
+// is replaced and the trailing speed modifier survives the rewrite.
+func TestEffortRewritesLevelKeepingModifier(t *testing.T) {
+	m, _ := newManager(t, fakeRegistry(), map[string]string{
+		"FAKE_AGENT_MODELS":     "swe-low-fast,swe-high-fast",
+		"FAKE_AGENT_ECHO_STATE": "1",
+	})
+	reply, err := replyText(t, m, session.Request{Model: "fake/swe-low-fast", Effort: "high", Prompt: "hi"})
+	if err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	if !strings.Contains(reply, "model=swe-high-fast") {
+		t.Fatalf("reply = %q, want the swe-high-fast variant selected", reply)
+	}
+}
+
+// TestEffortUnknownLevelListsVariants fails loud with the levels the family
+// actually advertises, so a mistyped effort is fixable from the error alone.
+func TestEffortUnknownLevelListsVariants(t *testing.T) {
+	m, _ := newManager(t, fakeRegistry(), map[string]string{
+		"FAKE_AGENT_MODELS": "base-low,base-high",
+	})
+	_, err := replyText(t, m, session.Request{Model: "fake/base", Effort: "xhigh", Prompt: "hi"})
+	if err == nil || !strings.Contains(err.Error(), "base-low") {
+		t.Fatalf("err = %v, want the family's variants listed", err)
+	}
+}
+
+// TestEffortNeedsModelFamily rejects an effort on the bare agent id: with no
+// family there is no variant to resolve.
+func TestEffortNeedsModelFamily(t *testing.T) {
+	m, _ := newManager(t, fakeRegistry(), nil)
+	_, err := replyText(t, m, session.Request{Model: "fake", Effort: "high", Prompt: "hi"})
+	if err == nil || !strings.Contains(err.Error(), "reasoning_effort") {
+		t.Fatalf("err = %v, want a family-required error", err)
+	}
+}
+
+// TestEffortIsCaseInsensitive keeps the wire liberal: "High" means "high".
+func TestEffortIsCaseInsensitive(t *testing.T) {
+	m, _ := newManager(t, fakeRegistry(), map[string]string{
+		"FAKE_AGENT_MODELS":     "base-low,base-high",
+		"FAKE_AGENT_ECHO_STATE": "1",
+	})
+	reply, err := replyText(t, m, session.Request{Model: "fake/base", Effort: "High", Prompt: "hi"})
+	if err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	if !strings.Contains(reply, "model=base-high") {
+		t.Fatalf("reply = %q, want the base-high variant selected", reply)
+	}
+}
+
+// TestFamilyWithoutEffortPicksDefault pins the omitted-effort path: a bare
+// family id selects its mid-tier variant instead of failing on no exact match.
+func TestFamilyWithoutEffortPicksDefault(t *testing.T) {
+	m, _ := newManager(t, fakeRegistry(), map[string]string{
+		"FAKE_AGENT_MODELS":     "base-low,base-high,base-max",
+		"FAKE_AGENT_ECHO_STATE": "1",
+	})
+	reply, err := replyText(t, m, session.Request{Model: "fake/base", Prompt: "hi"})
+	if err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	if !strings.Contains(reply, "model=base-high") {
+		t.Fatalf("reply = %q, want the base-high default selected", reply)
+	}
+}

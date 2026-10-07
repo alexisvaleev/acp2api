@@ -118,6 +118,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		tools: len(req.Tools) > 0 && choice.UsesCallerTools(),
 		turn: session.Request{
 			Model:          req.Model,
+			Effort:         effortOf(req.ReasoningEffort),
 			ConversationID: conversationID,
 			Workspace:      req.Workspace,
 			Prompt:         prompt,

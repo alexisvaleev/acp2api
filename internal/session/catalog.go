@@ -103,12 +103,99 @@ func modelInfos(option *acp.ConfigOption) []ModelInfo {
 	return out
 }
 
+// levelWords are the trailing id components a catalog uses for effort levels:
+// "claude-opus-5-max" is family "claude-opus-5" at level "max".
+var levelWords = map[string]bool{
+	"none": true, "minimal": true, "low": true, "medium": true,
+	"high": true, "xhigh": true, "max": true,
+}
+
+// modifierWords are trailing id components independent of effort — speed or
+// context variants such as "-fast", "-priority", "-1m" — preserved when an
+// effort swap rewrites the level in front of them.
+var modifierWords = map[string]bool{"fast": true, "priority": true, "1m": true}
+
+// splitVariant peels at most one level word and any modifiers off the end of a
+// catalog id, so "claude-opus-5-max-fast" splits as base "claude-opus-5",
+// level "max", modifier "fast". An id with no recognisable suffix is its own
+// base.
+func splitVariant(id string) (base, level, modifier string) {
+	parts := strings.Split(id, "-")
+	for len(parts) > 0 {
+		last := parts[len(parts)-1]
+		switch {
+		case level == "" && levelWords[last]:
+			level = last
+		case modifier == "" && modifierWords[last]:
+			modifier = last
+		default:
+			return strings.Join(parts, "-"), level, modifier
+		}
+		parts = parts[:len(parts)-1]
+	}
+	return strings.Join(parts, "-"), level, modifier
+}
+
+// defaultEffortOrder is the level preference for a family id the caller named
+// without an effort: "devin/swe-2" selects swe-2-high, the family's mid-tier
+// default, the same way omitting reasoning_effort defers to a provider's own.
+var defaultEffortOrder = []string{"high", "medium", "max", "xhigh", "low", "minimal", "none"}
+
+// modelCandidates lists the catalog ids a request may mean, most specific
+// first. Without an effort the id itself leads, then the family defaults in
+// defaultEffortOrder, so a bare family name keeps working. With an effort the
+// family form "model-effort" leads — "swe-2" + "max" tries "swe-2-max" —
+// followed by the suffixed-id rewrite that keeps a trailing modifier:
+// "gpt-6-sol-max-priority" + "high" tries "gpt-6-sol-high-priority" before
+// "gpt-6-sol-high".
+func modelCandidates(model, effort string) []string {
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	if effort == "" {
+		out := []string{model}
+		for _, level := range defaultEffortOrder {
+			out = append(out, model+"-"+level)
+		}
+		return out
+	}
+
+	base, _, modifier := splitVariant(model)
+	rewritten := base + "-" + effort
+	if modifier != "" {
+		rewritten += "-" + modifier
+	}
+
+	seen := map[string]bool{}
+	out := []string{}
+	for _, candidate := range []string{model + "-" + effort, rewritten, base + "-" + effort} {
+		if !seen[candidate] {
+			seen[candidate] = true
+			out = append(out, candidate)
+		}
+	}
+	return out
+}
+
+// familyVariants lists the catalog entries under one family prefix, for the
+// error an unknown effort produces: the caller learns the levels that exist
+// rather than the whole catalog.
+func familyVariants(option *acp.ConfigOption, model string) []string {
+	base, _, _ := splitVariant(model)
+	variants := []string{}
+	for _, candidate := range option.Options {
+		if candidate.Value == base || strings.HasPrefix(candidate.Value, base+"-") {
+			variants = append(variants, candidate.Value)
+		}
+	}
+	sort.Strings(variants)
+	return variants
+}
+
 // selectModel applies a requested model to a session.
 //
 // An unknown id is an error, never a silent no-op: the caller asked for a
 // specific model, and running the agent's default instead would answer a
 // question nobody asked. The error lists what the agent does offer.
-func (c *connection) selectModel(ctx context.Context, sessionID, model string) error {
+func (c *connection) selectModel(ctx context.Context, sessionID, model, effort string) error {
 	c.mu.Lock()
 	option := c.modelOption
 	c.mu.Unlock()
@@ -119,22 +206,29 @@ func (c *connection) selectModel(ctx context.Context, sessionID, model string) e
 			c.agent.ID, model)
 	}
 
-	for _, candidate := range option.Options {
-		if candidate.Value != model {
-			continue
+	candidates := modelCandidates(model, effort)
+	for _, want := range candidates {
+		for _, candidate := range option.Options {
+			if candidate.Value != want {
+				continue
+			}
+			if _, err := c.client.Request(ctx, acp.MethodSessionSetConfig, acp.SetConfigOptionRequest{
+				SessionID: sessionID,
+				ConfigID:  option.ID,
+				Value:     want,
+			}); err != nil {
+				return fmt.Errorf("session: select model %q on agent %q: %w", want, c.agent.ID, err)
+			}
+			slog.With("module", "session").Debug("model selected",
+				"agent", c.agent.ID, "session", sessionID, "model", want)
+			return nil
 		}
-		if _, err := c.client.Request(ctx, acp.MethodSessionSetConfig, acp.SetConfigOptionRequest{
-			SessionID: sessionID,
-			ConfigID:  option.ID,
-			Value:     model,
-		}); err != nil {
-			return fmt.Errorf("session: select model %q on agent %q: %w", model, c.agent.ID, err)
-		}
-		slog.With("module", "session").Debug("model selected",
-			"agent", c.agent.ID, "session", sessionID, "model", model)
-		return nil
 	}
 
+	if effort != "" {
+		return fmt.Errorf("session: agent %q model %q has no effort %q; variants: %s",
+			c.agent.ID, model, effort, strings.Join(familyVariants(option, model), ", "))
+	}
 	return fmt.Errorf("session: agent %q has no model %q; %s",
 		c.agent.ID, model, describeModels(modelInfos(option)))
 }

@@ -183,7 +183,7 @@ func (c *connection) byID(sessionID string) *state {
 //
 // The bool reports whether it was created, which is what tells the caller the
 // agent holds no history yet and the transcript has to be replayed.
-func (c *connection) session(ctx context.Context, conversationID, model string) (*state, bool, error) {
+func (c *connection) session(ctx context.Context, conversationID, model, effort string) (*state, bool, error) {
 	if st := c.lookup(conversationID); st != nil {
 		return st, false, nil
 	}
@@ -196,7 +196,7 @@ func (c *connection) session(ctx context.Context, conversationID, model string) 
 		return st, false, nil
 	}
 
-	st, err := c.newSession(ctx, model)
+	st, err := c.newSession(ctx, model, effort)
 	if err != nil {
 		return nil, false, err
 	}
@@ -235,7 +235,7 @@ func (c *connection) lookup(conversationID string) *state {
 }
 
 // newSession opens one ACP session and its client-side handler.
-func (c *connection) newSession(ctx context.Context, model string) (*state, error) {
+func (c *connection) newSession(ctx context.Context, model, effort string) (*state, error) {
 	raw, err := c.client.Request(ctx, acp.MethodSessionNew, acp.NewSessionRequest{
 		Cwd:        c.workspace,
 		McpServers: []acp.McpServer{},
@@ -270,8 +270,16 @@ func (c *connection) newSession(ctx context.Context, model string) (*state, erro
 	if err := c.applyMode(ctx, res); err != nil {
 		return nil, err
 	}
+	if effort != "" && model == "" {
+		// An effort with no family cannot pick a variant: "agent" alone means
+		// the default, and guessing a family would silently answer through the
+		// wrong model.
+		return nil, fmt.Errorf(
+			"session: reasoning_effort %q needs a model family; send the model as %q",
+			effort, c.agent.ID+"/<model>")
+	}
 	if model != "" {
-		if err := c.selectModel(ctx, res.SessionID, model); err != nil {
+		if err := c.selectModel(ctx, res.SessionID, model, effort); err != nil {
 			return nil, err
 		}
 	}

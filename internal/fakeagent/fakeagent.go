@@ -27,6 +27,10 @@
 //	FAKE_AGENT_TOOL_TITLE=text  title for the emitted tool_call
 //	FAKE_AGENT_TOOL_KIND=kind   kind for the emitted tool_call
 //	FAKE_AGENT_ECHO=1           reply with the prompt it received
+//	FAKE_AGENT_ECHO_STATE=1     reply with "mode=<mode> model=<model>" as last
+//	                            selected through session/set_config_option
+//	FAKE_AGENT_MODELS=a,b,c     advertise these model ids instead of the
+//	                            default pair, for effort-suffix variants
 //	FAKE_AGENT_REPLY=text       reply with this text
 //	FAKE_AGENT_REPLY_AFTER=text reply with this text from the second turn on
 //	FAKE_AGENT_IMAGES=1         advertise image prompt support
@@ -46,10 +50,30 @@ import (
 	"sync"
 )
 
-// fakeModels is the model catalog every fake session advertises.
+// fakeModels is the model catalog every fake session advertises, unless the
+// test overrides it wholesale through FAKE_AGENT_MODELS.
 var fakeModels = []map[string]any{
 	{"value": "fake-model-1", "name": "Fake Model 1"},
 	{"value": "fake-model-2", "name": "Fake Model 2"},
+}
+
+// fakeCatalog returns the advertised model list: the caller's override when
+// FAKE_AGENT_MODELS carries a comma-separated id list, else the default pair.
+func fakeCatalog() []map[string]any {
+	list := os.Getenv("FAKE_AGENT_MODELS")
+	if list == "" {
+		return fakeModels
+	}
+	models := make([]map[string]any, 0)
+	for _, id := range strings.Split(list, ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			models = append(models, map[string]any{"value": id, "name": id})
+		}
+	}
+	if len(models) == 0 {
+		return fakeModels
+	}
+	return models
 }
 
 // fakeModes is the session mode list every fake session advertises.
@@ -114,6 +138,16 @@ type agent struct {
 	authMetaKeys  int
 	mode          string
 	model         string
+	models        []map[string]any
+}
+
+// models returns the catalog this process advertises, resolved once at startup
+// so the session/new offer and the set_config_option check cannot diverge.
+func (a *agent) catalog() []map[string]any {
+	if a.models == nil {
+		a.models = fakeCatalog()
+	}
+	return a.models
 }
 
 // Model reports the model the gateway last selected.
@@ -264,8 +298,8 @@ func (a *agent) handleRequest(msg message) {
 			"configOptions": []any{map[string]any{
 				"id":           "model",
 				"category":     "model",
-				"currentValue": "fake-model-1",
-				"options":      fakeModels,
+				"currentValue": a.catalog()[0]["value"],
+				"options":      a.catalog(),
 			}},
 		})
 	case "session/set_mode":
@@ -299,7 +333,7 @@ func (a *agent) handleRequest(msg message) {
 		_ = json.Unmarshal(msg.Params, &p)
 		if p.ConfigID == "model" {
 			known := false
-			for _, model := range fakeModels {
+			for _, model := range a.catalog() {
 				if model["value"] == p.Value {
 					known = true
 					break
