@@ -142,6 +142,122 @@ func TestParallelToolCallsAndTextModalitiesAreSupported(t *testing.T) {
 	}
 }
 
+// TestReasoningEffortIsHonoured pins the one reasoning key that maps onto ACP:
+// it must not be reported as ignored, or a caller would be told the level it
+// set was dropped when it was in fact applied.
+func TestReasoningEffortIsHonoured(t *testing.T) {
+	for _, body := range []string{
+		`{"reasoning_effort":"high"}`,
+		`{"reasoning":{"effort":"high"}}`,
+	} {
+		req := decode(t, `{"model":"devin","messages":[{"role":"user","content":"hi"}],`+strings.TrimPrefix(body, "{"))
+		ignored, err := ValidateRequest(req)
+		if err != nil {
+			t.Fatalf("%s: reasoning effort must be accepted, got %v", body, err)
+		}
+		if len(ignored) != 0 {
+			t.Fatalf("%s: ignored = %v, want none", body, ignored)
+		}
+	}
+}
+
+// TestReasoningFieldsWithoutAcpEquivalentAreRefused is the regression guard for
+// a reasoning object that used to be modelled as a single effort field: every
+// other key vanished without an error and without an ignored_params entry, so a
+// caller could ask for a reasoning summary or a reasoning token budget and
+// never learn it had been dropped.
+func TestReasoningFieldsWithoutAcpEquivalentAreRefused(t *testing.T) {
+	cases := map[string]string{
+		"reasoning.summary":          `{"summary":"auto"}`,
+		"reasoning.generate_summary": `{"generate_summary":"concise"}`,
+		"reasoning.max_tokens":       `{"max_tokens":1024}`,
+	}
+
+	for name, reasoning := range cases {
+		t.Run(name, func(t *testing.T) {
+			var req ResponsesRequest
+			body := `{"model":"devin","input":"hi","reasoning":` + reasoning + `}`
+			if err := json.Unmarshal([]byte(body), &req); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := ValidateParams(&req)
+			if err == nil {
+				t.Fatalf("%s must be refused, not dropped", name)
+			}
+			if err.Param != "reasoning" {
+				t.Fatalf("rejected param = %q, want reasoning", err.Param)
+			}
+			if err.Reason == "" {
+				t.Fatalf("%s was refused without a reason", name)
+			}
+		})
+	}
+}
+
+// TestReasoningWithOnlyAnUnknownKeyIsReported covers the third disposition: a
+// key we neither honour nor must refuse is accepted, but it is named in
+// acp.ignored_params rather than disappearing.
+func TestReasoningWithOnlyAnUnknownKeyIsReported(t *testing.T) {
+	var req ResponsesRequest
+	if err := json.Unmarshal([]byte(`{"model":"devin","input":"hi","reasoning":{"foo":"bar"}}`), &req); err != nil {
+		t.Fatal(err)
+	}
+
+	ignored, err := ValidateParams(&req)
+	if err != nil {
+		t.Fatalf("an unknown reasoning key must be accepted, got %v", err)
+	}
+	if len(ignored) != 1 || ignored[0] != "reasoning" {
+		t.Fatalf("ignored = %v, want [reasoning]", ignored)
+	}
+}
+
+// TestEffortReadsOnlyTheEffortKey keeps the reader and the policy in step: the
+// reader must not invent a level out of a key the check refuses.
+func TestEffortReadsOnlyTheEffortKey(t *testing.T) {
+	cases := map[string]string{
+		`{"effort":"high"}`:             "high",
+		`{"effort":"High"}`:             "High",
+		`{"effort":"high","x":1}`:       "high",
+		`{"summary":"auto"}`:            "",
+		`{}`:                            "",
+		`{"effort":null}`:               "",
+		`{"effort":{"nested":"thing"}}`: "",
+	}
+
+	for body, want := range cases {
+		var req ResponsesRequest
+		if err := json.Unmarshal([]byte(`{"model":"devin","reasoning":`+body+`}`), &req); err != nil {
+			t.Fatalf("%s: %v", body, err)
+		}
+		if got := req.Effort(); got != want {
+			t.Fatalf("%s: effort = %q, want %q", body, got, want)
+		}
+	}
+}
+
+// TestEffortLevelsAreValidated guards the cheap pre-spawn check: the catalog
+// vocabulary is fixed, so a level outside it is refused before an agent starts.
+func TestEffortLevelsAreValidated(t *testing.T) {
+	for _, effort := range EffortLevels {
+		if !ReasoningEffortIsKnown(effort) {
+			t.Fatalf("%q is an advertised level and must be accepted", effort)
+		}
+		if !ReasoningEffortIsKnown(strings.ToUpper(effort)) {
+			t.Fatalf("%q must be accepted case-insensitively", effort)
+		}
+	}
+	if !ReasoningEffortIsKnown("") {
+		t.Fatal("an absent effort must be accepted")
+	}
+	for _, bad := range []string{"bogus", "highest", "very-high", "5"} {
+		if ReasoningEffortIsKnown(bad) {
+			t.Fatalf("%q is not a catalog level and must be refused", bad)
+		}
+	}
+}
+
 func TestIgnoredListIsSorted(t *testing.T) {
 	req := decode(t, `{
 		"model":"devin",

@@ -175,14 +175,50 @@ func modelCandidates(model, effort string) []string {
 	return out
 }
 
-// familyVariants lists the catalog entries under one family prefix, for the
-// error an unknown effort produces: the caller learns the levels that exist
-// rather than the whole catalog.
+// isFamilyMember reports whether a catalog id belongs to the family a request
+// named. A family is not a bare prefix: "swe-2" is a family of "swe-2-high",
+// never of "swe-20-high" or "swe-2x-max", or the error that lists variants
+// would send the caller to a different model. Membership is the family followed
+// by a level word, optionally behind modifier words.
+func isFamilyMember(id, base string) bool {
+	if id == base {
+		return true
+	}
+	if !strings.HasPrefix(id, base+"-") {
+		return false
+	}
+	rest := strings.Split(strings.TrimPrefix(id, base+"-"), "-")
+	for i, part := range rest {
+		switch {
+		case levelWords[part]:
+			return true
+		case i < len(rest)-1 && modifierWords[part]:
+			// A modifier counts only when something follows it: a trailing
+			// "-fast" with no level behind it may be another model's name.
+			continue
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+// familyVariants lists the catalog ids an effort may resolve to under one
+// family, for the error an unknown effort produces: the caller learns the
+// levels that exist rather than the whole catalog.
+//
+// The base id itself is excluded. A family is usually advertised only through
+// its level variants, so a base entry means the model has no variants to pick
+// from — and answering "variants: swe-2" to a caller who just sent "swe-2" is
+// not a variant list, it is an echo.
 func familyVariants(option *acp.ConfigOption, model string) []string {
 	base, _, _ := splitVariant(model)
 	variants := []string{}
 	for _, candidate := range option.Options {
-		if candidate.Value == base || strings.HasPrefix(candidate.Value, base+"-") {
+		if candidate.Value == base {
+			continue
+		}
+		if isFamilyMember(candidate.Value, base) {
 			variants = append(variants, candidate.Value)
 		}
 	}
@@ -226,8 +262,14 @@ func (c *connection) selectModel(ctx context.Context, sessionID, model, effort s
 	}
 
 	if effort != "" {
+		variants := familyVariants(option, model)
+		if len(variants) == 0 {
+			// Listing the id the caller just sent would read as a variant.
+			return fmt.Errorf("session: agent %q model %q has no effort variants; %s",
+				c.agent.ID, model, describeModels(modelInfos(option)))
+		}
 		return fmt.Errorf("session: agent %q model %q has no effort %q; variants: %s",
-			c.agent.ID, model, effort, strings.Join(familyVariants(option, model), ", "))
+			c.agent.ID, model, effort, strings.Join(variants, ", "))
 	}
 	return fmt.Errorf("session: agent %q has no model %q; %s",
 		c.agent.ID, model, describeModels(modelInfos(option)))

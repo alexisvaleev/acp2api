@@ -50,6 +50,12 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A level no catalog can carry is refused here, before the agent is
+	// spawned: the vocabulary is fixed, so a mistyped effort is a free error.
+	if !s.checkEffort(w, chatEffort(req)) {
+		return
+	}
+
 	// A conversation id makes the session persistent, so the agent keeps the
 	// history and only the newest turn is sent to it. Without one the agent
 	// starts from nothing, so the whole transcript must be flattened into the
@@ -118,7 +124,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		tools: len(req.Tools) > 0 && choice.UsesCallerTools(),
 		turn: session.Request{
 			Model:          req.Model,
-			Effort:         effortOf(req.ReasoningEffort),
+			Effort:         chatEffort(req),
 			ConversationID: conversationID,
 			Workspace:      req.Workspace,
 			Prompt:         prompt,

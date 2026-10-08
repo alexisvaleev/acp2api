@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"sort"
@@ -68,6 +69,8 @@ const (
 	reasonToolStrict = "strict schema enforcement is not applied; the schema is passed to the agent as a description"
 	reasonSuffix     = "a completion suffix cannot be produced by an agent that answers rather than continues text"
 	reasonBestOf     = "best_of would require sampling candidates the agent does not expose; use n instead"
+	reasonReasonSum  = "an ACP agent's reasoning stream is forwarded as reasoning_content; it cannot be summarised on demand"
+	reasonReasonCaps = "an ACP agent's reasoning is not billed or bounded the way this field assumes, so the limit would be ignored"
 )
 
 // paramPolicy is the single source of truth for how every policed parameter is
@@ -106,9 +109,14 @@ var paramPolicy = map[string]ParamRule{
 
 	/* Honoured: the effort level selects the agent's model variant —
 	   "devin/swe-2" + effort "max" resolves to "swe-2-max" in the agent's
-	   advertised catalog. */
+	   advertised catalog. reasoning_effort is chat's flat form; reasoning is
+	   the Responses object, whose only understood key today is effort, so
+	   checkReasoning refuses the keys it cannot honour rather than letting
+	   them vanish. */
 	"reasoning_effort": {Name: "reasoning_effort", Disposition: Supported},
-	"reasoning":        {Name: "reasoning", Disposition: Supported},
+	"reasoning": {
+		Name: "reasoning", Disposition: Supported, Check: checkReasoning,
+	},
 
 	/* Accepted and reported: they steer the agent but cannot change the shape
 	   of the response, so a caller cannot detect that they were dropped. */
@@ -148,6 +156,123 @@ func checkModalities(value any) (Disposition, string) {
 		}
 	}
 	return Supported, ""
+}
+
+// checkReasoning polices the Responses reasoning object. Only `effort` maps
+// onto ACP — it picks the agent's model variant — so the other keys are
+// refused rather than dropped. A request that names a summary or a reasoning
+// token budget is asking for something this gateway cannot produce, and a
+// caller cannot tell the difference unless it is told.
+//
+// The value is a json.RawMessage because the object has to be readable when it
+// holds keys no struct field models: a typed struct would hide them from the
+// policy entirely, which is the failure this check exists to prevent.
+func checkReasoning(value any) (Disposition, string) {
+	keys, ok := reasoningKeys(value)
+	if !ok {
+		// A caller that sent something other than an object named nothing we
+		// could honour, but there is also nothing to report as ignored.
+		return Unsupported, "reasoning must be an object"
+	}
+
+	effort := false
+	for key := range keys {
+		switch key {
+		case "effort":
+			effort = true
+		case "summary", "generate_summary":
+			return Unsupported, reasonReasonSum
+		case "max_tokens":
+			return Unsupported, reasonReasonCaps
+		}
+	}
+	if !effort && len(keys) > 0 {
+		// Unrecognised keys only: the object carries no effort to honour and no
+		// known control to refuse, so the honest answer is that it was dropped.
+		return Ignored, reasonSteering
+	}
+	return Supported, ""
+}
+
+// reasoningKeys reads the key set of a reasoning value. It accepts both the raw
+// message a request decodes into and an already-decoded map, so the check can
+// be exercised without going through JSON.
+func reasoningKeys(value any) (map[string]bool, bool) {
+	var body map[string]json.RawMessage
+	switch v := value.(type) {
+	case json.RawMessage:
+		if len(v) == 0 {
+			return nil, false
+		}
+		if err := json.Unmarshal(v, &body); err != nil {
+			return nil, false
+		}
+	case map[string]json.RawMessage:
+		body = v
+	case map[string]any:
+		keys := make(map[string]bool, len(v))
+		for key := range v {
+			keys[key] = true
+		}
+		return keys, true
+	default:
+		return nil, false
+	}
+	keys := make(map[string]bool, len(body))
+	for key := range body {
+		keys[key] = true
+	}
+	return keys, true
+}
+
+// ReasoningEffort reads the effort level out of a reasoning object, or the
+// empty string when it names none. It is the one key the gateway honours, so
+// the reader lives beside the check that guarantees the rest are refused.
+func ReasoningEffort(value any) string {
+	var body map[string]json.RawMessage
+	switch v := value.(type) {
+	case json.RawMessage:
+		if len(v) == 0 {
+			return ""
+		}
+		if err := json.Unmarshal(v, &body); err != nil {
+			return ""
+		}
+	case map[string]json.RawMessage:
+		body = v
+	default:
+		return ""
+	}
+	raw, ok := body["effort"]
+	if !ok {
+		return ""
+	}
+	var effort string
+	if err := json.Unmarshal(raw, &effort); err != nil {
+		return ""
+	}
+	return effort
+}
+
+// EffortLevels are the effort words a model catalog spells its variants with,
+// sorted for a stable error message. ReasoningEffortIsKnown is the validation
+// the handler runs before an agent is spawned: a level no catalog can carry is
+// a request we can refuse for free.
+var EffortLevels = []string{"high", "low", "max", "medium", "minimal", "none", "xhigh"}
+
+// ReasoningEffortIsKnown reports whether an effort names a level a model
+// catalog can carry. An empty effort means "not given" and is accepted.
+func ReasoningEffortIsKnown(effort string) bool {
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	if effort == "" {
+		return true
+	}
+	for _, level := range EffortLevels {
+		if effort == level {
+			return true
+		}
+	}
+	return false
 }
 
 // MaxChoices caps how many completions one request may ask for. Every choice is

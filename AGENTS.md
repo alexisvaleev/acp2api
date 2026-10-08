@@ -124,6 +124,21 @@ the same check on every push to `main` and on pull requests.
   `acp.ignored_params`. `internal/openai/params.go` is the single source of
   truth; a field added to a request struct without a rule is a bug, and a test
   asserts it cannot happen.
+  - A parameter modelled as a typed struct rather than `json.RawMessage` hides
+    the keys no field names, so the policy can never judge them. Where a
+    parameter is an object whose keys matter — `reasoning` is the first — keep
+    it raw and police it with a `Check` function.
+  - The policy runs on **every** surface. `/v1/responses` used to skip it, so an
+    unsupported parameter was answered rather than refused; an endpoint that
+    decodes a request struct calls `ValidateParams` before it does any work.
+- **Reasoning effort selects a model variant.** `reasoning_effort` (chat) and
+  `reasoning.effort` (Responses) resolve against the catalog the agent
+  advertises, as `internal/session/catalog.go` describes: a family plus a level
+  picks `<family>-<level>`, and a trailing speed or context modifier survives
+  the swap. The level vocabulary is fixed and validated before an agent is
+  spawned. An effort applies **only when a session is created** — a live
+  session keeps its model — and that drop is logged rather than left silent.
+  Reasoning *content* is a separate rule; see below.
 - **The tool-call contract fails open.** ACP has no caller-defined functions, so
   the contract lives in the prompt (`internal/openai/preamble.go`) and is
   best-effort. Text held back by the stream must always be released as content

@@ -52,14 +52,24 @@ type ResponsesRequest struct {
 	// Reasoning carries the Responses effort selector; its effort level maps
 	// onto the agent's model-variant catalog the way chat's reasoning_effort
 	// does.
-	Reasoning *struct {
-		Effort string `json:"effort,omitempty"`
-	} `json:"reasoning,omitempty"`
+	//
+	// It is kept raw rather than as a struct with an Effort field: the policy
+	// has to see every key the caller sent, including the ones no field models,
+	// so checkReasoning can refuse a summary or a reasoning token budget
+	// instead of letting it vanish. See Effort.
+	Reasoning json.RawMessage `json:"reasoning,omitempty"`
 
 	// ConversationID and Workspace are this gateway's extensions, mirroring the
 	// chat surface.
 	ConversationID string `json:"conversation_id,omitempty"`
 	Workspace      string `json:"workspace,omitempty"`
+}
+
+// Effort returns the reasoning effort this request asks for, or the empty
+// string. The reasoning object is the only place the Responses surface carries
+// it.
+func (r ResponsesRequest) Effort() string {
+	return ReasoningEffort(r.Reasoning)
 }
 
 // InputItem is one entry of an array-form `input`.

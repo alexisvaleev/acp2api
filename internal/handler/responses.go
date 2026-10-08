@@ -22,6 +22,20 @@ func (s *Server) handleCreateResponse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The parameter policy runs first, on this surface too: a parameter the
+	// gateway cannot honour has to be refused or reported before any agent
+	// process is spawned. Without it a request is answered while its unsupported
+	// settings vanish, which is the one outcome the policy exists to prevent.
+	ignored, paramErr := openai.ValidateParams(&req)
+	if paramErr != nil {
+		writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest,
+			openai.CodeUnsupportedParameter, paramErr.Error(), paramErr.Param)
+		return
+	}
+	if len(ignored) > 0 {
+		w.Header().Set("X-Acp2api-Ignored-Params", strings.Join(ignored, ","))
+	}
+
 	available := strings.Join(agentIDs(s.manager), ", ")
 	if strings.TrimSpace(req.Model) == "" {
 		writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest, "missing_model",
@@ -44,6 +58,12 @@ func (s *Server) handleCreateResponse(w http.ResponseWriter, r *http.Request) {
 	messages, err := openai.InputMessages(req.Input)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest, "invalid_input", err.Error(), "input")
+		return
+	}
+
+	// A level no catalog can carry is refused here, before the agent is
+	// spawned: the vocabulary is fixed, so a mistyped effort is a free error.
+	if !s.checkEffort(w, req.Effort()) {
 		return
 	}
 
@@ -96,7 +116,7 @@ func (s *Server) handleCreateResponse(w http.ResponseWriter, r *http.Request) {
 		conversationID: conversationID,
 		turn: session.Request{
 			Model:          req.Model,
-			Effort:         responsesEffort(req),
+			Effort:         req.Effort(),
 			ConversationID: conversationID,
 			Workspace:      req.Workspace,
 			Prompt:         prompt,
@@ -111,15 +131,6 @@ func (s *Server) handleCreateResponse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.blockingResponse(w, r, plan)
-}
-
-// responsesEffort reads the Responses reasoning object: its effort picks the
-// catalog variant the same way chat's reasoning_effort does.
-func responsesEffort(req openai.ResponsesRequest) string {
-	if req.Reasoning == nil {
-		return ""
-	}
-	return req.Reasoning.Effort
 }
 
 // responsePlan is everything both renderers need for one response.

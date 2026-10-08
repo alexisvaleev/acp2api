@@ -205,9 +205,8 @@ func (s *Server) authorised(r *http.Request) bool {
 	return constantTimeEqual(strings.TrimPrefix(header, prefix), s.token)
 }
 
-// writeJSON renders a JSON response.
-// effortOf reads an optional effort pointer; the chat surface carries it as
-// "reasoning_effort" and the Responses surface as "reasoning.effort".
+// effortOf reads an optional effort pointer, the flat chat form. An explicit
+// empty string means "not given", which is how a caller clears the level.
 func effortOf(value *string) string {
 	if value == nil {
 		return ""
@@ -215,6 +214,37 @@ func effortOf(value *string) string {
 	return *value
 }
 
+// chatEffort resolves the effort a chat request asks for. reasoning_effort is
+// the OpenAI field; reasoning is the object form clients send when they speak
+// the Responses shape, and its effort key means the same thing here rather than
+// being dropped.
+//
+// The flat field wins when both are present: it is the surface's own name, and
+// a caller that set both would otherwise have named one level twice.
+func chatEffort(req openai.ChatCompletionRequest) string {
+	if effort := effortOf(req.ReasoningEffort); effort != "" {
+		return effort
+	}
+	return openai.ReasoningEffort(req.Reasoning)
+}
+
+// checkEffort refuses an effort level no model catalog can carry.
+//
+// The catalog vocabulary is fixed and small, so an unknown level is a caller
+// error we can name exactly — and naming it here fails the request before an
+// agent process is spawned, rather than after its cold start has been paid for.
+func (s *Server) checkEffort(w http.ResponseWriter, effort string) bool {
+	if openai.ReasoningEffortIsKnown(effort) {
+		return true
+	}
+	writeError(w, http.StatusBadRequest, openai.ErrTypeInvalidRequest,
+		"invalid_reasoning_effort",
+		fmt.Sprintf("reasoning_effort %q is not a level an agent catalog carries; use one of: %s",
+			effort, strings.Join(openai.EffortLevels, ", ")), "reasoning_effort")
+	return false
+}
+
+// writeJSON renders a JSON response.
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

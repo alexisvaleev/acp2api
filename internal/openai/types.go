@@ -92,12 +92,19 @@ type ChatCompletionRequest struct {
 
 	// Parameters that steer the agent but cannot change the response shape.
 	// They are accepted and reported.
-	ReasoningEffort *string         `json:"reasoning_effort,omitempty"`
-	Verbosity       *string         `json:"verbosity,omitempty"`
-	ServiceTier     *string         `json:"service_tier,omitempty"`
-	Prediction      json.RawMessage `json:"prediction,omitempty"`
-	Store           *bool           `json:"store,omitempty"`
-	Metadata        json.RawMessage `json:"metadata,omitempty"`
+	Verbosity   *string         `json:"verbosity,omitempty"`
+	ServiceTier *string         `json:"service_tier,omitempty"`
+	Prediction  json.RawMessage `json:"prediction,omitempty"`
+	Store       *bool           `json:"store,omitempty"`
+	Metadata    json.RawMessage `json:"metadata,omitempty"`
+
+	// ReasoningEffort is the flat effort selector, honoured because it picks
+	// the agent's model variant. It is a pointer so an explicit empty string
+	// counts as absent rather than as a level.
+	ReasoningEffort *string `json:"reasoning_effort,omitempty"`
+	// Reasoning is the object form, which clients that speak the Responses
+	// shape send here too. It is kept raw so checkReasoning sees every key.
+	Reasoning json.RawMessage `json:"reasoning,omitempty"`
 
 	// Modalities must be text-only: this gateway cannot return audio.
 	Modalities []string `json:"modalities,omitempty"`

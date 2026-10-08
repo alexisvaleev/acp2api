@@ -185,6 +185,7 @@ func (c *connection) byID(sessionID string) *state {
 // agent holds no history yet and the transcript has to be replayed.
 func (c *connection) session(ctx context.Context, conversationID, model, effort string) (*state, bool, error) {
 	if st := c.lookup(conversationID); st != nil {
+		c.warnEffortOnLiveSession(conversationID, st, model, effort)
 		return st, false, nil
 	}
 
@@ -193,6 +194,7 @@ func (c *connection) session(ctx context.Context, conversationID, model, effort 
 
 	// Re-check: another goroutine may have created it while we waited.
 	if st := c.lookup(conversationID); st != nil {
+		c.warnEffortOnLiveSession(conversationID, st, model, effort)
 		return st, false, nil
 	}
 
@@ -217,6 +219,32 @@ func (c *connection) session(ctx context.Context, conversationID, model, effort 
 	}
 	slog.With("module", "session").Info("session opened", attrs...)
 	return st, true, nil
+}
+
+// warnEffortOnLiveSession reports an effort a live session cannot honour.
+//
+// A session is created once and keeps its model for its whole life: ACP has no
+// way to re-select a variant without disturbing the conversation, and turning
+// an existing session into a new one would throw its history away. The effort
+// is therefore dropped — which is exactly the kind of silent no-op this gateway
+// refuses elsewhere, so it is named in the log rather than left to be inferred
+// from a model name the caller cannot see.
+//
+// It stays a warning rather than an error because the turn itself is still the
+// one the caller asked for; only the level is not.
+func (c *connection) warnEffortOnLiveSession(conversationID string, st *state, model, effort string) {
+	if effort == "" {
+		return
+	}
+	attrs := []any{
+		"agent", c.agent.ID, "session", st.id, "model", model, "reasoning_effort", effort,
+	}
+	if conversationID != "" {
+		attrs = append(attrs, "conversation", conversationID)
+	}
+	slog.With("module", "session").Warn(
+		"reasoning_effort applies only when a session is created; the existing session keeps its model",
+		attrs...)
 }
 
 // lookup returns an existing session for a conversation, touching it.
