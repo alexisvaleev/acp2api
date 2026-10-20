@@ -53,6 +53,11 @@ type Request struct {
 	// ReasoningEffort, when set, is applied to a fresh session through the
 	// agent's thought-level config option. Empty leaves the agent's default.
 	ReasoningEffort string
+	// Effort is the caller's reasoning-effort level (OpenAI reasoning_effort,
+	// or reasoning.effort on the Responses surface). It applies only alongside
+	// the model part of Model: "agent/family" plus an effort resolves to the
+	// catalog's "<family>-<effort>" variant at session creation.
+	Effort string
 	// ConversationID maps to a persistent ACP session. Empty means an ephemeral
 	// session that is not remembered between calls.
 	ConversationID string
@@ -205,7 +210,7 @@ func (m *Manager) Prompt(ctx context.Context, req Request, onUpdate func(acp.Ses
 	if hasImages(req.Parts) && !conn.capabilities.Images {
 		return Result{}, ErrImagesUnsupported
 	}
-	st, created, err := conn.session(ctx, req.ConversationID, model, req.ReasoningEffort)
+	st, created, err := conn.session(ctx, req.ConversationID, model, req.Effort, req.ReasoningEffort)
 	if err != nil {
 		return Result{}, err
 	}

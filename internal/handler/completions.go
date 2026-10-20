@@ -99,7 +99,7 @@ func (s *Server) runPrompt(r *http.Request, req openai.CompletionRequest, prompt
 
 	result, err := s.manager.Prompt(r.Context(), session.Request{
 		Model:          req.Model,
-		ReasoningEffort: effortValue(req.ReasoningEffort),
+		Effort:         effortValue(req.ReasoningEffort),
 		ConversationID: conversationID,
 		Workspace:      req.Workspace,
 		Prompt:         prompt,
@@ -271,7 +271,7 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, req op
 	var steps openai.StepLog
 	result, promptErr := s.manager.Prompt(r.Context(), session.Request{
 		Model:          req.Model,
-		ReasoningEffort: effortValue(req.ReasoningEffort),
+		Effort:         effortValue(req.ReasoningEffort),
 		ConversationID: conversationID,
 		Workspace:      req.Workspace,
 		Prompt:         prompt,

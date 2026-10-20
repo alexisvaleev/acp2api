@@ -191,6 +191,13 @@ func (a *agent) turnPieces(prompt string) []string {
 		return splitEvery(prompt, envInt("FAKE_AGENT_CHUNKS", 2))
 	}
 
+	// Reports the mode and model the session settled on: the only way a test
+	// observes what set_config_option applied across the process boundary.
+	if os.Getenv("FAKE_AGENT_ECHO_STATE") == "1" {
+		return splitEvery(fmt.Sprintf("mode=%s model=%s", a.Mode(), a.Model()),
+			envInt("FAKE_AGENT_CHUNKS", 2))
+	}
+
 	// A literal reply, optionally different from the second turn on, which is
 	// how the structured-output retry is exercised.
 	if reply := os.Getenv("FAKE_AGENT_REPLY"); reply != "" {

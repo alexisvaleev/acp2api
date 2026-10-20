@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -350,5 +351,231 @@ func TestUnknownReasoningEffortIsRejected(t *testing.T) {
 		Model: "fake", Prompt: "hi", ReasoningEffort: "ultra",
 	}, noop); err == nil {
 		t.Fatal("expected an unknown thought level to fail")
+	}
+}
+
+func replyText(t *testing.T, m *session.Manager, req session.Request) (string, error) {
+	t.Helper()
+	var reply strings.Builder
+	_, err := m.Prompt(context.Background(), req, func(u acp.SessionUpdate) error {
+		if u.SessionUpdate == "agent_message_chunk" && u.Content != nil {
+			reply.WriteString(u.Content.Text)
+		}
+		return nil
+	})
+	return reply.String(), err
+}
+
+// TestEffortSelectsFamilyVariant pins the family form: "fake/base" plus
+// effort "high" selects the catalog entry "base-high", not the default.
+func TestEffortSelectsFamilyVariant(t *testing.T) {
+	m, _ := newManager(t, fakeRegistry(), map[string]string{
+		"FAKE_AGENT_MODELS":     "base-low,base-high,base-high-fast",
+		"FAKE_AGENT_ECHO_STATE": "1",
+	})
+	reply, err := replyText(t, m, session.Request{Model: "fake/base", Effort: "high", Prompt: "hi"})
+	if err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	if !strings.Contains(reply, "model=base-high") {
+		t.Fatalf("reply = %q, want the base-high variant selected", reply)
+	}
+}
+
+// TestEffortRewritesLevelKeepingModifier covers a suffixed id: the level word
+// is replaced and the trailing speed modifier survives the rewrite.
+func TestEffortRewritesLevelKeepingModifier(t *testing.T) {
+	m, _ := newManager(t, fakeRegistry(), map[string]string{
+		"FAKE_AGENT_MODELS":     "swe-low-fast,swe-high-fast",
+		"FAKE_AGENT_ECHO_STATE": "1",
+	})
+	reply, err := replyText(t, m, session.Request{Model: "fake/swe-low-fast", Effort: "high", Prompt: "hi"})
+	if err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	if !strings.Contains(reply, "model=swe-high-fast") {
+		t.Fatalf("reply = %q, want the swe-high-fast variant selected", reply)
+	}
+}
+
+// TestEffortUnknownLevelListsVariants fails loud with the levels the family
+// actually advertises, so a mistyped effort is fixable from the error alone.
+func TestEffortUnknownLevelListsVariants(t *testing.T) {
+	m, _ := newManager(t, fakeRegistry(), map[string]string{
+		"FAKE_AGENT_MODELS": "base-low,base-high",
+	})
+	_, err := replyText(t, m, session.Request{Model: "fake/base", Effort: "xhigh", Prompt: "hi"})
+	if err == nil || !strings.Contains(err.Error(), "base-low") {
+		t.Fatalf("err = %v, want the family's variants listed", err)
+	}
+}
+
+// TestEffortNeedsModelFamily rejects an effort on the bare agent id: with no
+// family there is no variant to resolve.
+func TestEffortNeedsModelFamily(t *testing.T) {
+	m, _ := newManager(t, fakeRegistry(), nil)
+	_, err := replyText(t, m, session.Request{Model: "fake", Effort: "high", Prompt: "hi"})
+	if err == nil || !strings.Contains(err.Error(), "reasoning_effort") {
+		t.Fatalf("err = %v, want a family-required error", err)
+	}
+}
+
+// TestEffortIsCaseInsensitive keeps the wire liberal: "High" means "high".
+func TestEffortIsCaseInsensitive(t *testing.T) {
+	m, _ := newManager(t, fakeRegistry(), map[string]string{
+		"FAKE_AGENT_MODELS":     "base-low,base-high",
+		"FAKE_AGENT_ECHO_STATE": "1",
+	})
+	reply, err := replyText(t, m, session.Request{Model: "fake/base", Effort: "High", Prompt: "hi"})
+	if err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	if !strings.Contains(reply, "model=base-high") {
+		t.Fatalf("reply = %q, want the base-high variant selected", reply)
+	}
+}
+
+// TestFamilyWithoutEffortPicksDefault pins the omitted-effort path: a bare
+// family id selects its mid-tier variant instead of failing on no exact match.
+func TestFamilyWithoutEffortPicksDefault(t *testing.T) {
+	m, _ := newManager(t, fakeRegistry(), map[string]string{
+		"FAKE_AGENT_MODELS":     "base-low,base-high,base-max",
+		"FAKE_AGENT_ECHO_STATE": "1",
+	})
+	reply, err := replyText(t, m, session.Request{Model: "fake/base", Prompt: "hi"})
+	if err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	if !strings.Contains(reply, "model=base-high") {
+		t.Fatalf("reply = %q, want the base-high default selected", reply)
+	}
+}
+
+// TestVariantListIsTheFamilyOnly is the regression guard for a variant list
+// built from a bare string prefix: "base" must not claim "base-2-high" or
+// "basex-high", or a caller fixing a mistyped effort is sent to a different
+// model's ids.
+func TestVariantListIsTheFamilyOnly(t *testing.T) {
+	m, _ := newManager(t, fakeRegistry(), map[string]string{
+		// base-high is the family's own level. base-2-high and basex-high share
+		// its prefix but belong to other models; base-fast is a modifier with no
+		// level behind it, so it is not a variant of base either.
+		"FAKE_AGENT_MODELS": "base-2-high,base-fast,base-high,basex-high,base-none",
+	})
+	_, err := replyText(t, m, session.Request{Model: "fake/base", Effort: "medium", Prompt: "hi"})
+	if err == nil {
+		t.Fatal("an effort the family does not offer must fail")
+	}
+	for _, want := range []string{"base-high", "base-none"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %q, want %s listed as a variant", err, want)
+		}
+	}
+	for _, unwanted := range []string{"base-2-high", "basex-high", "base-fast"} {
+		if strings.Contains(err.Error(), unwanted) {
+			t.Fatalf("err = %q, must not offer %s from another model", err, unwanted)
+		}
+	}
+}
+
+// TestVariantListPreservesModifiers keeps the rewrite discoverable: the error
+// that lists variants has to show the modifier spellings the effort swap can
+// produce, or the caller cannot tell which ids the swap will accept.
+func TestVariantListPreservesModifiers(t *testing.T) {
+	m, _ := newManager(t, fakeRegistry(), map[string]string{
+		"FAKE_AGENT_MODELS": "swe-low,swe-max-fast",
+	})
+	_, err := replyText(t, m, session.Request{Model: "fake/swe", Effort: "xhigh", Prompt: "hi"})
+	if err == nil {
+		t.Fatal("xhigh is not offered by this family")
+	}
+	if !strings.Contains(err.Error(), "swe-max-fast") {
+		t.Fatalf("err = %q, want the modifier spelling swe-max-fast listed", err)
+	}
+}
+
+// TestNoVariantsIsSaidInWords covers the empty case: a family with no variants
+// at all must not answer with an empty "variants:" list, and must not offer the
+// id the caller already sent back as though it were an alternative.
+func TestNoVariantsIsSaidInWords(t *testing.T) {
+	m, _ := newManager(t, fakeRegistry(), map[string]string{
+		"FAKE_AGENT_MODELS": "alpha,beta",
+	})
+	_, err := replyText(t, m, session.Request{Model: "fake/alpha", Effort: "high", Prompt: "hi"})
+	if err == nil {
+		t.Fatal("an unknown effort on a family with no variants must fail")
+	}
+	if !strings.Contains(err.Error(), "no effort variants") {
+		t.Fatalf("err = %q, want the no-variants sentence", err)
+	}
+	if strings.Contains(err.Error(), "variants: alpha") {
+		t.Fatalf("err = %q, must not echo the requested id as a variant", err)
+	}
+}
+
+// TestEffortOnLiveConversationIsReported pins the one case a session cannot
+// honour: a session keeps the model it was created with, so a later turn that
+// changes the effort is dropped — and has to say so in the log rather than pass
+// silently.
+func TestEffortOnLiveConversationIsReported(t *testing.T) {
+	var logged strings.Builder
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(restore) })
+
+	m, _ := newManager(t, fakeRegistry(), map[string]string{
+		"FAKE_AGENT_MODELS":     "base-low,base-high",
+		"FAKE_AGENT_ECHO_STATE": "1",
+	})
+
+	first, err := replyText(t, m, session.Request{
+		Model: "fake/base", Effort: "low", ConversationID: "c1", Prompt: "hi"})
+	if err != nil {
+		t.Fatalf("first turn: %v", err)
+	}
+	if !strings.Contains(first, "model=base-low") {
+		t.Fatalf("first reply = %q, want base-low", first)
+	}
+
+	logged.Reset()
+	second, err := replyText(t, m, session.Request{
+		Model: "fake/base", Effort: "high", ConversationID: "c1", Prompt: "again"})
+	if err != nil {
+		t.Fatalf("second turn: %v", err)
+	}
+	// The session cannot change model, so the level is dropped; that is
+	// deliberate, but it must be visible.
+	if !strings.Contains(logged.String(), "reasoning_effort") {
+		t.Fatalf("log = %q, want the dropped effort named", logged.String())
+	}
+	if !strings.Contains(second, "model=base-low") {
+		t.Fatalf("second reply = %q, the live session keeps base-low", second)
+	}
+}
+
+// TestEffortAbsentOnLiveConversationIsQuiet keeps the warning rare: an ordinary
+// follow-up turn that names no effort must not log an ignored one.
+func TestEffortAbsentOnLiveConversationIsQuiet(t *testing.T) {
+	var logged strings.Builder
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(restore) })
+
+	m, _ := newManager(t, fakeRegistry(), map[string]string{
+		"FAKE_AGENT_MODELS":     "base-low,base-high",
+		"FAKE_AGENT_ECHO_STATE": "1",
+	})
+	if _, err := replyText(t, m, session.Request{
+		Model: "fake/base", Effort: "low", ConversationID: "c2", Prompt: "hi"}); err != nil {
+		t.Fatalf("first turn: %v", err)
+	}
+
+	logged.Reset()
+	if _, err := replyText(t, m, session.Request{
+		Model: "fake/base", ConversationID: "c2", Prompt: "again"}); err != nil {
+		t.Fatalf("second turn: %v", err)
+	}
+	if strings.Contains(logged.String(), "reasoning_effort") {
+		t.Fatalf("log = %q, want no dropped-effort warning without an effort", logged.String())
 	}
 }

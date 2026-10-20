@@ -255,6 +255,44 @@ An unknown model is refused with the list of ones the agent does offer. It is
 never quietly replaced by the agent's default: a caller who named a model asked a
 specific question, and answering a different one is worse than failing.
 
+### Reasoning effort
+
+Agents whose catalogs carry effort variants — Devin spells them
+`<family>-<level>`, like `swe-2-max` — also take the standard
+`reasoning_effort` parameter (or `reasoning.effort` on the Responses surface).
+Name the family and set the level separately:
+
+```json
+{ "model": "devin/swe-2", "reasoning_effort": "high" }
+```
+
+resolves to the catalog entry `swe-2-high`. A suffixed id has its level word
+replaced while a trailing speed/context variant survives:
+`devin/claude-opus-5-max-fast` with effort `low` selects
+`claude-opus-5-low-fast`. An effort a family does not offer is refused with the
+variants it does, and an effort on the bare agent id (`devin` with no family)
+is an error — there is no variant to pick.
+
+Both surfaces read it the same way, because clients that speak the Responses
+shape send its object to `/v1/chat/completions` too:
+
+```json
+{ "model": "devin/swe-2", "reasoning": { "effort": "high" } }
+```
+
+The level vocabulary is fixed (`none`, `minimal`, `low`, `medium`, `high`,
+`xhigh`, `max`), so a level outside it is refused with `400` and code
+`invalid_reasoning_effort` before any agent starts — there is nothing to resolve
+it against. `reasoning` is otherwise not a pass-through: its `summary`,
+`generate_summary` and `max_tokens` keys have no ACP equivalent and are rejected
+with `unsupported_parameter` rather than dropped, and an unrecognised key is
+accepted and reported in `acp.ignored_params`.
+
+An effort applies **when a session is created**. A conversation keeps the model
+it opened with — ACP has no way to re-select a variant without disturbing the
+history — so a later turn naming a different effort on the same `conversation_id`
+has it dropped, with a warning in the process log naming the session.
+
 Set `discover_models: true` to read every agent's catalog in the background at
 startup, so `/v1/models` is complete before the first request. It is off by
 default because discovery starts each agent, which costs its cold start.
@@ -338,9 +376,9 @@ explicitly rejected, or accepted and reported back to you.
 
 | Disposition | Parameters | Behaviour |
 | ----------- | ---------- | --------- |
-| Supported | `model`, `messages`, `stream`, `stream_options`, `conversation_id`, `user`, `workspace`, `tools`, `tool_choice`, `parallel_tool_calls`, `n`, `prompt`, `echo`, `stop`, `max_tokens`, `max_completion_tokens`, `max_output_tokens`, `response_format`, `modalities: ["text"]`, `reasoning_effort` | Honoured. `reasoning_effort` maps onto the agent's thought-level config option (e.g. Devin's `thought_level`); an agent that advertises none rejects it with `invalid_model`, and an unknown level fails with the levels the agent does offer. |
-| Accepted and reported | `temperature`, `top_p`, `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `verbosity`, `service_tier`, `prediction`, `store`, `metadata` | The agent owns its own sampling and does not expose these controls, so they cannot be honoured — and you cannot detect that as an error. They are listed in `acp.ignored_params` and in the `X-Acp2api-Ignored-Params` header. `tools[].function.strict` is reported the same way. |
-| Rejected | `functions`, `function_call`, `logprobs`, `top_logprobs`, `audio`, `web_search_options`, `suffix`, `best_of`, `modalities` containing anything but `text`, `n` above 8 | `400` with code `unsupported_parameter`, naming the offending field. Ignoring these would make the response violate your request. |
+| Supported | `model`, `messages`, `stream`, `stream_options`, `conversation_id`, `user`, `workspace`, `tools`, `tool_choice`, `parallel_tool_calls`, `n`, `prompt`, `echo`, `stop`, `max_tokens`, `max_completion_tokens`, `max_output_tokens`, `response_format`, `modalities: ["text"]`, `reasoning_effort`, `reasoning.effort` | Honoured. `reasoning` is honoured only through its `effort` key; its other keys are rejected or reported below, never dropped. An effort resolves to the catalog's `<family>-<effort>` model variant first; when no variant carries it, it falls back to the agent's thought-level config option (e.g. Devin's `thought_level`), and an unknown level fails listing what the agent offers. |
+| Accepted and reported | `temperature`, `top_p`, `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `verbosity`, `service_tier`, `prediction`, `store`, `metadata`, `reasoning` with keys the policy does not name | The agent owns its own sampling and does not expose these controls, so they cannot be honoured — and you cannot detect that as an error. They are listed in `acp.ignored_params` and in the `X-Acp2api-Ignored-Params` header. `tools[].function.strict` is reported the same way. |
+| Rejected | `functions`, `function_call`, `logprobs`, `top_logprobs`, `audio`, `web_search_options`, `suffix`, `best_of`, `modalities` containing anything but `text`, `n` above 8, `reasoning.summary`, `reasoning.generate_summary`, `reasoning.max_tokens` | `400` with code `unsupported_parameter`, naming the offending field. Ignoring these would make the response violate your request: a caller who asked for a reasoning summary cannot tell it was dropped. |
 
 `n` is capped at 8 because every choice is a separate agent turn, so an
 unbounded `n` would be an unbounded cost. Streaming is refused together with

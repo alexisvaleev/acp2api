@@ -186,8 +186,9 @@ func (c *connection) byID(sessionID string) *state {
 //
 // The bool reports whether it was created, which is what tells the caller the
 // agent holds no history yet and the transcript has to be replayed.
-func (c *connection) session(ctx context.Context, conversationID, model, effort string) (*state, bool, error) {
+func (c *connection) session(ctx context.Context, conversationID, model, effort, thoughtLevel string) (*state, bool, error) {
 	if st := c.lookup(conversationID); st != nil {
+		c.warnEffortOnLiveSession(conversationID, st, model, firstEffort(effort, thoughtLevel))
 		return st, false, nil
 	}
 
@@ -196,10 +197,11 @@ func (c *connection) session(ctx context.Context, conversationID, model, effort 
 
 	// Re-check: another goroutine may have created it while we waited.
 	if st := c.lookup(conversationID); st != nil {
+		c.warnEffortOnLiveSession(conversationID, st, model, firstEffort(effort, thoughtLevel))
 		return st, false, nil
 	}
 
-	st, err := c.newSession(ctx, model, effort)
+	st, err := c.newSession(ctx, model, effort, thoughtLevel)
 	if err != nil {
 		return nil, false, err
 	}
@@ -222,6 +224,32 @@ func (c *connection) session(ctx context.Context, conversationID, model, effort 
 	return st, true, nil
 }
 
+// warnEffortOnLiveSession reports an effort a live session cannot honour.
+//
+// A session is created once and keeps its model for its whole life: ACP has no
+// way to re-select a variant without disturbing the conversation, and turning
+// an existing session into a new one would throw its history away. The effort
+// is therefore dropped — which is exactly the kind of silent no-op this gateway
+// refuses elsewhere, so it is named in the log rather than left to be inferred
+// from a model name the caller cannot see.
+//
+// It stays a warning rather than an error because the turn itself is still the
+// one the caller asked for; only the level is not.
+func (c *connection) warnEffortOnLiveSession(conversationID string, st *state, model, effort string) {
+	if effort == "" {
+		return
+	}
+	attrs := []any{
+		"agent", c.agent.ID, "session", st.id, "model", model, "reasoning_effort", effort,
+	}
+	if conversationID != "" {
+		attrs = append(attrs, "conversation", conversationID)
+	}
+	slog.With("module", "session").Warn(
+		"reasoning_effort applies only when a session is created; the existing session keeps its model",
+		attrs...)
+}
+
 // lookup returns an existing session for a conversation, touching it.
 func (c *connection) lookup(conversationID string) *state {
 	if conversationID == "" {
@@ -238,7 +266,7 @@ func (c *connection) lookup(conversationID string) *state {
 }
 
 // newSession opens one ACP session and its client-side handler.
-func (c *connection) newSession(ctx context.Context, model, effort string) (*state, error) {
+func (c *connection) newSession(ctx context.Context, model, effort, thoughtLevel string) (*state, error) {
 	raw, err := c.client.Request(ctx, acp.MethodSessionNew, acp.NewSessionRequest{
 		Cwd:        c.workspace,
 		McpServers: []acp.McpServer{},
@@ -273,17 +301,48 @@ func (c *connection) newSession(ctx context.Context, model, effort string) (*sta
 	if err := c.applyMode(ctx, res); err != nil {
 		return nil, err
 	}
+	// Effort resolves against the model catalog: "family" plus an effort names
+	// the "<family>-<effort>" variant, and an effort it cannot name fails with
+	// the variants the family does offer. It applies only alongside a family —
+	// "agent" alone means the default model, and guessing a family would
+	// silently answer through the wrong one.
+	if effort != "" && model == "" {
+		return nil, fmt.Errorf(
+			"session: reasoning_effort %q needs a model family; send the model as %q",
+			effort, c.agent.ID+"/<model>")
+	}
+	variantApplied := false
 	if model != "" {
-		if err := c.selectModel(ctx, res.SessionID, model); err != nil {
+		if err := c.selectModel(ctx, res.SessionID, model, effort); err != nil {
 			return nil, err
 		}
+		variantApplied = effort != ""
 	}
-	if effort != "" {
-		if err := c.selectEffort(ctx, res.SessionID, effort); err != nil {
+	// The thought-level select is the other effort knob; a variant id already
+	// carries the level, so it runs only when the catalog did not consume it.
+	if thoughtLevel != "" && !variantApplied {
+		if err := c.selectEffort(ctx, res.SessionID, thoughtLevel); err != nil {
 			return nil, err
 		}
 	}
 	return st, nil
+}
+
+// firstEffort reports the effort to warn about: the union effort when set,
+// else the thought-level-only one.
+func firstEffort(effort, thoughtLevel string) string {
+	if effort != "" {
+		return effort
+	}
+	return thoughtLevel
+}
+
+// thoughtLevelOption returns the agent's advertised thought-level select, or
+// nil when the agent offers none.
+func (c *connection) thoughtLevelOption() *acp.ConfigOption {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.thoughtOption
 }
 
 // applyMode selects the agent's session mode when one is configured.
