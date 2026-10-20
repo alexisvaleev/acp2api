@@ -33,6 +33,18 @@ const maxListedModels = 20
 // exist — ACP has no separate discovery call.
 func (c *connection) captureCatalog(session acp.NewSessionResponse) {
 	for _, option := range session.ConfigOptions {
+		if isThoughtOption(option) {
+			c.mu.Lock()
+			first := c.thoughtOption == nil
+			c.thoughtOption = &option
+			c.mu.Unlock()
+			if first {
+				slog.With("module", "session").Debug("thought-level option captured",
+					"agent", c.agent.ID, "session", session.SessionID, "option", option.ID,
+					"levels", len(option.Options), "current", option.CurrentValue)
+			}
+			continue
+		}
 		if !isModelOption(option) {
 			continue
 		}
@@ -48,7 +60,6 @@ func (c *connection) captureCatalog(session acp.NewSessionResponse) {
 				"models", len(option.Options), "current", option.CurrentValue,
 				"sample", sampleValues(option.Options))
 		}
-		return
 	}
 }
 
@@ -62,6 +73,12 @@ func sampleValues(options []acp.ConfigOptionValue) string {
 	return strings.Join(parts, ",")
 }
 
+// isThoughtOption reports whether a config option is the thought-level selector
+// — the reasoning-effort knob some agents expose alongside the model list.
+func isThoughtOption(option acp.ConfigOption) bool {
+	return option.Category == "thought_level" || option.ID == "thought_level"
+}
+
 // isModelOption reports whether a config option is the model selector.
 func isModelOption(option acp.ConfigOption) bool {
 	if option.Category == "model" {
@@ -73,6 +90,49 @@ func isModelOption(option acp.ConfigOption) bool {
 		return false
 	}
 	return strings.Contains(option.ID, "model")
+}
+
+// selectEffort applies a requested reasoning effort to a session by setting the
+// agent's thought-level config option. An agent without one is an error — the
+// caller asked for a level that cannot be honoured.
+//
+// The value is the agent's own level name. OpenAI callers send low/medium/high;
+// an agent that advertises a different ladder (Devin exposes medium/high/max)
+// rejects unknown values with the levels it does offer, rather than silently
+// reasoning at a different depth.
+func (c *connection) selectEffort(ctx context.Context, sessionID, effort string) error {
+	c.mu.Lock()
+	option := c.thoughtOption
+	c.mu.Unlock()
+
+	if option == nil {
+		return fmt.Errorf(
+			"session: agent %q advertises no thought level to select, so effort %q cannot be honoured",
+			c.agent.ID, effort)
+	}
+
+	for _, candidate := range option.Options {
+		if candidate.Value != effort {
+			continue
+		}
+		if _, err := c.client.Request(ctx, acp.MethodSessionSetConfig, acp.SetConfigOptionRequest{
+			SessionID: sessionID,
+			ConfigID:  option.ID,
+			Value:     effort,
+		}); err != nil {
+			return fmt.Errorf("session: select effort %q on agent %q: %w", effort, c.agent.ID, err)
+		}
+		slog.With("module", "session").Debug("effort selected",
+			"agent", c.agent.ID, "session", sessionID, "effort", effort)
+		return nil
+	}
+
+	levels := make([]string, 0, len(option.Options))
+	for _, v := range option.Options {
+		levels = append(levels, v.Value)
+	}
+	return fmt.Errorf("session: agent %q has no thought level %q; offers %s",
+		c.agent.ID, effort, strings.Join(levels, ", "))
 }
 
 // Catalog returns the agent's advertised models, or nil when it has not been

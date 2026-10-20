@@ -52,6 +52,13 @@ var fakeModels = []map[string]any{
 	{"value": "fake-model-2", "name": "Fake Model 2"},
 }
 
+// fakeEfforts is the thought-level list every fake session advertises.
+var fakeEfforts = []map[string]any{
+	{"value": "low", "name": "Low"},
+	{"value": "medium", "name": "Medium"},
+	{"value": "high", "name": "High"},
+}
+
 // fakeModes is the session mode list every fake session advertises.
 var fakeModes = []map[string]any{
 	{"id": "build", "name": "Build"},
@@ -114,6 +121,7 @@ type agent struct {
 	authMetaKeys  int
 	mode          string
 	model         string
+	effort        string
 }
 
 // Model reports the model the gateway last selected.
@@ -266,6 +274,11 @@ func (a *agent) handleRequest(msg message) {
 				"category":     "model",
 				"currentValue": "fake-model-1",
 				"options":      fakeModels,
+			}, map[string]any{
+				"id":           "thought_level",
+				"category":     "thought_level",
+				"currentValue": "medium",
+				"options":      fakeEfforts,
 			}},
 		})
 	case "session/set_mode":
@@ -297,6 +310,24 @@ func (a *agent) handleRequest(msg message) {
 			Value    string `json:"value"`
 		}
 		_ = json.Unmarshal(msg.Params, &p)
+		if p.ConfigID == "thought_level" {
+			known := false
+			for _, level := range fakeEfforts {
+				if level["value"] == p.Value {
+					known = true
+					break
+				}
+			}
+			if !known {
+				a.write(map[string]any{"jsonrpc": "2.0", "id": rawID(msg.ID), "error": map[string]any{
+					"code": -32602, "message": "unknown thought level " + p.Value,
+				}})
+				return
+			}
+			a.mu.Lock()
+			a.effort = p.Value
+			a.mu.Unlock()
+		}
 		if p.ConfigID == "model" {
 			known := false
 			for _, model := range fakeModels {

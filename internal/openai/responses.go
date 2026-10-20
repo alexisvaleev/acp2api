@@ -48,6 +48,7 @@ type ResponsesRequest struct {
 	TopP            *float64        `json:"top_p,omitempty"`
 	Metadata        json.RawMessage `json:"metadata,omitempty"`
 	User            string          `json:"user,omitempty"`
+	ReasoningEffort *string         `json:"reasoning_effort,omitempty"`
 
 	// ConversationID and Workspace are this gateway's extensions, mirroring the
 	// chat surface.

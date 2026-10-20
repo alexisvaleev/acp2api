@@ -106,7 +106,7 @@ var paramPolicy = map[string]ParamRule{
 
 	/* Accepted and reported: they steer the agent but cannot change the shape
 	   of the response, so a caller cannot detect that they were dropped. */
-	"reasoning_effort": {Name: "reasoning_effort", Disposition: Ignored, Reason: reasonSteering},
+	"reasoning_effort": {Name: "reasoning_effort", Disposition: Supported},
 	"verbosity":        {Name: "verbosity", Disposition: Ignored, Reason: reasonSteering},
 	"service_tier":     {Name: "service_tier", Disposition: Ignored, Reason: reasonSteering},
 	"prediction":       {Name: "prediction", Disposition: Ignored, Reason: reasonSteering},

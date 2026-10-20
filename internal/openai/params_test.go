@@ -54,7 +54,7 @@ func TestUnsupportedParametersAreRejected(t *testing.T) {
 func TestIgnoredParametersAreReported(t *testing.T) {
 	cases := []string{
 		"temperature", "top_p", "seed", "presence_penalty", "frequency_penalty", "logit_bias",
-		"reasoning_effort", "verbosity", "service_tier", "prediction", "store", "metadata",
+		"verbosity", "service_tier", "prediction", "store", "metadata",
 	}
 
 	for _, name := range cases {
@@ -69,7 +69,7 @@ func TestIgnoredParametersAreReported(t *testing.T) {
 				body[name] = map[string]any{"type": "content", "content": "x"}
 			case "store":
 				body[name] = true
-			case "reasoning_effort", "verbosity", "service_tier":
+			case "verbosity", "service_tier":
 				body[name] = "medium"
 			default:
 				body[name] = 0.5

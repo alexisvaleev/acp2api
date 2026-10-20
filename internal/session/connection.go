@@ -41,6 +41,9 @@ type connection struct {
 	// modelOption is the agent's model selector, captured from session/new. It
 	// is the only place the gateway learns which model ids exist.
 	modelOption *acp.ConfigOption
+	// thoughtOption is the agent's thought-level (reasoning effort) selector,
+	// captured the same way. nil when the agent advertises none.
+	thoughtOption *acp.ConfigOption
 }
 
 // connectionCapabilities is the part of the agent's initialize result the
@@ -183,7 +186,7 @@ func (c *connection) byID(sessionID string) *state {
 //
 // The bool reports whether it was created, which is what tells the caller the
 // agent holds no history yet and the transcript has to be replayed.
-func (c *connection) session(ctx context.Context, conversationID, model string) (*state, bool, error) {
+func (c *connection) session(ctx context.Context, conversationID, model, effort string) (*state, bool, error) {
 	if st := c.lookup(conversationID); st != nil {
 		return st, false, nil
 	}
@@ -196,7 +199,7 @@ func (c *connection) session(ctx context.Context, conversationID, model string) 
 		return st, false, nil
 	}
 
-	st, err := c.newSession(ctx, model)
+	st, err := c.newSession(ctx, model, effort)
 	if err != nil {
 		return nil, false, err
 	}
@@ -235,7 +238,7 @@ func (c *connection) lookup(conversationID string) *state {
 }
 
 // newSession opens one ACP session and its client-side handler.
-func (c *connection) newSession(ctx context.Context, model string) (*state, error) {
+func (c *connection) newSession(ctx context.Context, model, effort string) (*state, error) {
 	raw, err := c.client.Request(ctx, acp.MethodSessionNew, acp.NewSessionRequest{
 		Cwd:        c.workspace,
 		McpServers: []acp.McpServer{},
@@ -272,6 +275,11 @@ func (c *connection) newSession(ctx context.Context, model string) (*state, erro
 	}
 	if model != "" {
 		if err := c.selectModel(ctx, res.SessionID, model); err != nil {
+			return nil, err
+		}
+	}
+	if effort != "" {
+		if err := c.selectEffort(ctx, res.SessionID, effort); err != nil {
 			return nil, err
 		}
 	}

@@ -32,6 +32,7 @@ type CompletionRequest struct {
 	FrequencyPenalty *float64        `json:"frequency_penalty,omitempty"`
 	Seed             *int            `json:"seed,omitempty"`
 	User             string          `json:"user,omitempty"`
+	ReasoningEffort *string         `json:"reasoning_effort,omitempty"`
 
 	// ConversationID and Workspace are this gateway's extensions.
 	ConversationID string `json:"conversation_id,omitempty"`

@@ -96,6 +96,7 @@ func (s *Server) handleCreateResponse(w http.ResponseWriter, r *http.Request) {
 		conversationID: conversationID,
 		turn: session.Request{
 			Model:          req.Model,
+		ReasoningEffort: effortValue(req.ReasoningEffort),
 			ConversationID: conversationID,
 			Workspace:      req.Workspace,
 			Prompt:         prompt,

@@ -334,3 +334,21 @@ func TestInteractiveAuthIsOptIn(t *testing.T) {
 		t.Fatalf("interactive auth was allowed, so the session should open: %v", err)
 	}
 }
+
+func TestReasoningEffortIsAppliedToNewSession(t *testing.T) {
+	m, _ := newManager(t, fakeRegistry(), nil)
+	if _, err := m.Prompt(context.Background(), session.Request{
+		Model: "fake", ConversationID: "effort-ok", Prompt: "hi", ReasoningEffort: "high",
+	}, noop); err != nil {
+		t.Fatalf("prompt with a valid effort: %v", err)
+	}
+}
+
+func TestUnknownReasoningEffortIsRejected(t *testing.T) {
+	m, _ := newManager(t, fakeRegistry(), nil)
+	if _, err := m.Prompt(context.Background(), session.Request{
+		Model: "fake", Prompt: "hi", ReasoningEffort: "ultra",
+	}, noop); err == nil {
+		t.Fatal("expected an unknown thought level to fail")
+	}
+}
